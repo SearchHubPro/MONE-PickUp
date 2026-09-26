@@ -59,6 +59,11 @@
   .seg button.on-back{background:var(--back);color:var(--back-t)}
   .deadline{display:flex;justify-content:space-between;align-items:center}
   .deadline b{font-size:28px;font-variant-numeric:tabular-nums}
+  .arrsel{display:flex;gap:6px;margin-top:4px}
+  .arrsel button{border:1px solid var(--line);background:var(--card2);color:var(--sub);border-radius:10px;
+    padding:8px 12px;font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;font-family:inherit}
+  .arrsel button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-t)}
+  .arrnote{color:var(--warn);font-size:12px;margin-top:6px;font-weight:700}
   .pick{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--line);
     border-radius:12px;margin-bottom:8px;background:var(--card2);user-select:none;cursor:pointer}
   .pick.on{border-color:var(--accent);background:#132638}
@@ -226,7 +231,7 @@
 
     <div class="card">
       <h2>時間</h2>
-      <label>お店に着く時刻(行き)</label>
+      <label>いつもの到着時刻(行き)</label>
       <input id="sArrive" type="time" value="20:50">
       <div class="row">
         <div><label>余裕(分)</label><input id="sBuffer" type="number" min="0" inputmode="numeric" value="5"></div>
@@ -319,8 +324,19 @@
   }
   const fmtLL = o => (o && o.lat!=null) ? o.lat.toFixed(6)+", "+o.lng.toFixed(6) : "";
   const hasLL = o => o && typeof o.lat==="number" && typeof o.lng==="number";
+  // 今日だけ別の到着時刻にしている場合はそれを使う(次の日は自動でいつもの時刻に戻る)
+  function effArrive(){
+    const o=data.todayArrive;
+    return (o && o.date===bizDate() && o.time) ? o.time : (data.arrive||"20:50");
+  }
+  function arriveOptions(){ return [...new Set([data.arrive||"20:50","20:50","21:50"])].sort(); }
+  function setTodayArrive(t){
+    if(t===(data.arrive||"20:50")) delete data.todayArrive;
+    else data.todayArrive={date:bizDate(), time:t};
+    save(); renderPick(); if(lastRoute) renderDeadline();
+  }
   function targetArrival(){
-    const [h,m] = (data.arrive||"20:50").split(":").map(Number);
+    const [h,m] = effArrive().split(":").map(Number);
     const d = new Date(); d.setHours(h,m,0,0); return d;
   }
   const sortedGirls = () => [...data.girls].sort((a,b)=>a.name.localeCompare(b.name,"ja"));
@@ -495,7 +511,11 @@
   // ---------- 今日の送迎:選択 ----------
   function renderPick(){
     if(mode==="go"){
-      $("topLeft").innerHTML='<div class="muted">お店に着く時刻</div><b>'+esc(data.arrive)+'</b>';
+      const cur=effArrive(), isToday=cur!==(data.arrive||"20:50");
+      $("topLeft").innerHTML='<div class="muted">お店に着く時刻</div><div class="arrsel">'+
+        arriveOptions().map(t=>`<button data-arr="${t}" class="${t===cur?"on":""}">${t}</button>`).join("")+
+        '</div>'+(isToday?`<div class="arrnote">今日は${esc(cur)}(明日は${esc(data.arrive)}に戻る)</div>`:"");
+      $("topLeft").querySelectorAll("[data-arr]").forEach(b=>b.onclick=()=>setTodayArrive(b.dataset.arr));
       $("pickTitle").textContent="今日迎えに行く子をタップ";
       $("btnSameAsGo").style.display="none";
     }else{
@@ -663,7 +683,7 @@
     else if(leftMin<=10){ cls="status-warn"; msg="あと"+leftMin+"分で出発"; }
     else msg="あと"+leftMin+"分";
     $("deadlineBox").innerHTML = `
-      <div class="muted">${esc(data.arrive)}に着くための出発時刻(余裕${+data.buffer||0}分込み)</div>
+      <div class="muted">${esc(effArrive())}に着くための出発時刻(余裕${+data.buffer||0}分込み)</div>
       <div class="big-time ${cls}">${hm(leaveBy)} までに出発</div>
       <div class="${cls}" style="font-weight:700">${msg}</div>
       <div class="muted">今すぐ出たらお店に ${hm(eta)} ごろ着</div>${rough}`;
