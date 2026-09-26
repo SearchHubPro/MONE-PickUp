@@ -335,16 +335,60 @@
   setInterval(tick, 15000); tick();
 
   // ---------- 住所 → 位置(無料:OpenStreetMap) ----------
+  // 全角数字・ハイフンを半角に、〒や郵便番号を除く
+  function normAddr(s){
+    return String(s).trim()
+      .replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+      .replace(/[－ー−‐―]/g,"-").replace(/　/g," ")
+      .replace(/^〒?\s*\d{3}-?\d{4}\s*/,"").replace(/^日本\s*/,"");
+  }
+  // 住所の後ろに付いたマンション名などを外す(番地の数字で終わる所まで残す)
+  function stripBuilding(s){
+    // 最初の「1-2-3」や「1番地2」の所までを住所とみなす
+    const m = s.match(/^.*?\d+(?:-\d+)+/) || s.match(/^.*?\d+番地?(?:\d+号?)?/);
+    if(m) return m[0].trim();
+    return s.replace(/\s+\S+$/,"").trim();
+  }
+  // 国土地理院の住所検索(日本の住所向け・キー不要)
+  async function gsiSearch(q){
+    const r = await fetch("https://msearch.gsi.go.jp/address-search/AddressSearch?q="+encodeURIComponent(q));
+    if(!r.ok) throw new Error("国土地理院の応答エラー("+r.status+")");
+    const j = await r.json();
+    if(!Array.isArray(j) || !j.length) return null;
+    const f = j[0], c = f.geometry && f.geometry.coordinates;
+    if(!c) return null;
+    return {lat:+c[1], lng:+c[0], hit:(f.properties&&f.properties.title)||""};
+  }
   async function geocode(addr){
+    const full = normAddr(addr);
+    const noBld = stripBuilding(full);
+    const gsiTries = [...new Set([full, noBld].filter(Boolean))];
+    let gsiErr = null;
+    for(const t of gsiTries){
+      try{
+        const g = await gsiSearch(t);
+        if(g){
+          // 見つかった地名に番地の数字が入ってなければ「だいたい」扱い
+          g.rough = !/[0-9]/.test(g.hit);
+          return g;
+        }
+      }catch(e){ gsiErr = e; }
+    }
+    const r = await nominatim(noBld || full);
+    if(r) return r;
+    if(gsiErr) throw gsiErr;
+    return null;
+  }
+  // 予備:OpenStreetMap
+  async function nominatim(addr){
     const tries = [addr.trim()];
-    let a = addr.trim().replace(/\s+\S*$/,"");  if(a && !tries.includes(a)) tries.push(a);
-    let b = addr.trim().replace(/[0-9０-９\-－ー−丁目番地号の\s]+[^0-9０-９]*$/,""); if(b && !tries.includes(b)) tries.push(b);
+    let b = addr.trim().replace(/[0-9\-丁目番地号の\s]+[^0-9]*$/,""); if(b && !tries.includes(b)) tries.push(b);
     for(let i=0;i<tries.length;i++){
       const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&accept-language=ja&q="+encodeURIComponent(tries[i]);
       const r = await fetch(url,{headers:{"Accept":"application/json"}});
       if(!r.ok) throw new Error("検索サービスの応答エラー("+r.status+")");
       const j = await r.json();
-      if(j && j[0]) return {lat:+j[0].lat, lng:+j[0].lon, rough:i>0};
+      if(j && j[0]) return {lat:+j[0].lat, lng:+j[0].lon, rough:true, hit:String(j[0].display_name||"").split(",").slice(0,3).join(" ")};
       await new Promise(res=>setTimeout(res,1100));
     }
     return null;
@@ -358,7 +402,8 @@
       if(!g){ toast("見つからへんかった。Googleマップで長押しした数字を貼ってな"); }
       else{
         llEl.value = fmtLL(g);
-        toast(g.rough ? "だいたいの位置しか取れへんかった。地図で確認してな" : "位置が取れたで");
+        const where = g.hit ? "「"+g.hit+"」" : "";
+        toast(g.rough ? where+"のだいたいの位置やで。保存したら「地図」で確認してな" : where+"で位置が取れたで");
       }
     }catch(e){ toast("調べられへんかった:"+e.message); }
     btn.disabled=false; btn.textContent=old;
