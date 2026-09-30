@@ -20,12 +20,17 @@
   html,body{margin:0;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
     font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
-  header{position:sticky;top:0;z-index:5;background:var(--bg);
+  /* 画面全体を「ヘッダー/中身(ここだけスクロール)/メニュー」の3段にする。
+     下のメニューを画面に固定しないので、iPhoneで高さの計算がずれても浮かない */
+  html,body{height:100%;overflow:hidden}
+  #app{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}
+  #scroller{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  header{flex:none;z-index:5;background:var(--bg);
     padding:12px 16px 8px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline}
   header h1{font-size:18px;margin:0}
   #clock{font-variant-numeric:tabular-nums;color:var(--sub);font-size:15px}
-  main{padding:16px 16px 110px;max-width:560px;margin:0 auto}
-  nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0c0f12;
+  main{padding:16px 16px 40px;max-width:560px;margin:0 auto}
+  nav{flex:none;display:flex;background:#0c0f12;
     border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:6}
   nav button{flex:1;background:none;border:0;color:var(--sub);padding:10px 0 12px;font-size:13px}
   nav button.on{color:var(--accent);font-weight:700}
@@ -117,8 +122,10 @@
 </style>
 </head>
 <body>
+<div id="app">
 <header><h1>送迎ルート</h1><div id="clock">--:--</div></header>
 
+<div id="scroller">
 <main>
   <!-- 今日の送迎 -->
   <section class="view on" id="v-today">
@@ -266,6 +273,7 @@
     </div>
   </section>
 </main>
+</div>
 
 <nav>
   <button data-v="today" class="on"><span>🚗</span>送迎</button>
@@ -273,12 +281,17 @@
   <button data-v="girls"><span>👤</span>女の子</button>
   <button data-v="settings"><span>⚙</span>設定</button>
 </nav>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
 (function(){
   "use strict";
   const $ = id => document.getElementById(id);
+  function fitHeight(){ document.documentElement.style.setProperty("--app-h", window.innerHeight+"px"); }
+  fitHeight();
+  ["resize","orientationchange","pageshow","focus"].forEach(ev=>window.addEventListener(ev,()=>{ fitHeight(); setTimeout(fitHeight,300); }));
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ fitHeight(); setTimeout(fitHeight,300); } });
   const KEY_DATA = "sougei.data.v1";
   const KEY_API  = "sougei.apikey.v1";
   const DAY_CUTOFF = 6; // 朝6時までは前の日の送迎として記録
@@ -349,7 +362,7 @@
   document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{
     document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
     document.querySelectorAll(".view").forEach(v=>v.classList.toggle("on",v.id==="v-"+b.dataset.v));
-    window.scrollTo(0,0);
+    $("scroller").scrollTo(0,0);
     if(b.dataset.v==="settings") fillSettings();
     if(b.dataset.v==="log") renderLog();
   }));
@@ -460,7 +473,7 @@
     $("gId").value=g.id; $("gName").value=g.name; $("gAddr").value=g.address||"";
     $("gLatLng").value=fmtLL(g); $("gMemo").value=g.memo||"";
     $("formTitle").textContent=g.name+" を編集"; $("gCancel").style.display="block";
-    window.scrollTo({top:0,behavior:"smooth"});
+    $("scroller").scrollTo({top:0,behavior:"smooth"});
   }
   function delGirl(id){
     const g=data.girls.find(x=>x.id===id); if(!g) return;
@@ -588,10 +601,15 @@
     return hasLL(p) ? {location:{latLng:{latitude:p.lat,longitude:p.lng}}} : {address:p.address};
   }
   // 決まった順番のまま、下道(高速・有料道路なし)で時間と距離を計算
+  // まずナビと同じ細かい混み具合計算(TRAFFIC_AWARE_OPTIMAL)、失敗したら従来の計算でやり直す
   async function computeRoute(key, origin, dest, mids){
+    try{ return await computeRouteWith("TRAFFIC_AWARE_OPTIMAL", key, origin, dest, mids); }
+    catch(e){ return await computeRouteWith("TRAFFIC_AWARE", key, origin, dest, mids); }
+  }
+  async function computeRouteWith(pref, key, origin, dest, mids){
     const body={
       origin: wp(origin), destination: wp(dest), intermediates: mids.map(wp),
-      travelMode:"DRIVE", routingPreference:"TRAFFIC_AWARE",
+      travelMode:"DRIVE", routingPreference:pref,
       routeModifiers:{avoidHighways:true, avoidTolls:true},
       languageCode:"ja-JP", regionCode:"jp", units:"METRIC"
     };
@@ -756,7 +774,7 @@
     if(mids.length) url+="&waypoints="+encodeURIComponent(mids.map(q).join("|"));
     setTimeout(()=>{ location.href=url; }, 700); // 出発地を省略=現在地から
   };
-  $("btnClear").onclick = () => { selected=[]; lastRoute=null; $("resultCard").style.display="none"; renderPick(); window.scrollTo(0,0); };
+  $("btnClear").onclick = () => { selected=[]; lastRoute=null; $("resultCard").style.display="none"; renderPick(); $("scroller").scrollTo(0,0); };
 
   // ---------- 記録画面 ----------
   let viewMonth = (()=>{ const d=parseYmd(bizDate()); return {y:d.getFullYear(), m:d.getMonth()}; })();
