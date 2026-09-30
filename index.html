@@ -84,6 +84,10 @@
   ol.route .i{width:28px;height:28px;border-radius:50%;background:var(--card2);display:flex;align-items:center;
     justify-content:center;font-weight:700;flex:none;font-size:14px}
   ol.route .leg{color:var(--sub);font-size:12px}
+  ol.route .mv{display:flex;flex-direction:column;gap:6px;flex:none}
+  ol.route .mv button{width:44px;height:36px;border-radius:9px;border:1px solid var(--line);background:var(--card2);
+    color:var(--text);font-size:15px;font-family:inherit}
+  ol.route .mv button:disabled{opacity:.25}
   ol.route .eta{float:right;font-variant-numeric:tabular-nums;color:var(--sub);font-size:13px}
   .big-time{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums}
   .status-ok{color:var(--ok)}.status-warn{color:var(--warn)}.status-ng{color:var(--ng)}
@@ -557,110 +561,108 @@
     });
   }
 
-  // ---------- 直線距離(キーなしの仮計算) ----------
+  // ---------- 直線距離(キーなしの仮計算・並び順の判定にも使う) ----------
   function dist(a,b){
     const R=6371, t=x=>x*Math.PI/180;
     const dLa=t(b.lat-a.lat), dLo=t(b.lng-a.lng);
     const h=Math.sin(dLa/2)**2+Math.cos(t(a.lat))*Math.cos(t(b.lat))*Math.sin(dLo/2)**2;
     return 2*R*Math.asin(Math.sqrt(h));
   }
-  function permutations(arr){
-    if(arr.length<=1) return [arr.slice()];
-    const out=[];
-    arr.forEach((x,i)=>{ permutations(arr.filter((_,j)=>j!==i)).forEach(p=>out.push([x,...p])); });
-    return out;
+  // 並び順のルール:行き=お店から遠い順 / 帰り=お店から近い順
+  function orderByRule(girls, dir, store){
+    const s=[...girls].sort((a,b)=>dist(store,b)-dist(store,a));
+    return dir==="go" ? s : s.reverse();
   }
-  // start:出発点(null可) / end:到着点(null=最後の子の家で終わり)
-  function straightRoute(start, girls, end){
-    let best=null;
-    for(const p of permutations(girls)){
-      const pts=[...(start?[start]:[]),...p,...(end?[end]:[])];
-      const legs=[]; let sum=0;
-      for(let i=0;i<pts.length-1;i++){ const d=dist(pts[i],pts[i+1]); legs.push({km:d}); sum+=d; }
-      if(!best||sum<best.km) best={order:p,legs,km:sum};
-    }
+  // 決まった順番で直線距離を計算 start:出発点(null可) / end:到着点(null=最後の子の家で終わり)
+  function straightFixed(start, order, end){
+    const pts=[...(start?[start]:[]),...order,...(end?[end]:[])];
+    const legs=[]; let km=0;
+    for(let i=0;i<pts.length-1;i++){ const d=dist(pts[i],pts[i+1]); legs.push({km:d}); km+=d; }
     // 目安時間:直線×1.4倍を時速25kmで走る想定(かなり大ざっぱ)
-    best.legs.forEach(l=>l.sec=l.km*1.4/25*3600);
-    best.sec=best.legs.reduce((s,l)=>s+l.sec,0);
-    best.mode="line"; best.hasStart=!!start;
-    return best;
+    legs.forEach(l=>l.sec=l.km*1.4/25*3600);
+    return {order:[...order], legs, km, sec:legs.reduce((s,l)=>s+l.sec,0), mode:"line", hasStart:!!start};
   }
 
   // ---------- Google Routes API(キーあり) ----------
   function wp(p){
     return hasLL(p) ? {location:{latLng:{latitude:p.lat,longitude:p.lng}}} : {address:p.address};
   }
+  // 決まった順番のまま、下道(高速・有料道路なし)で時間と距離を計算
   async function computeRoute(key, origin, dest, mids){
     const body={
       origin: wp(origin), destination: wp(dest), intermediates: mids.map(wp),
       travelMode:"DRIVE", routingPreference:"TRAFFIC_AWARE",
-      optimizeWaypointOrder: mids.length>1,
+      routeModifiers:{avoidHighways:true, avoidTolls:true},
       languageCode:"ja-JP", regionCode:"jp", units:"METRIC"
     };
     const r=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{
       method:"POST",
       headers:{"Content-Type":"application/json","X-Goog-Api-Key":key,
-        "X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.optimizedIntermediateWaypointIndex,routes.legs.duration,routes.legs.distanceMeters"},
+        "X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.legs.duration,routes.legs.distanceMeters"},
       body:JSON.stringify(body)
     });
     const j=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error((j.error&&j.error.message)||("HTTP "+r.status));
     const rt=j.routes&&j.routes[0]; if(!rt) throw new Error("ルートが見つからへん");
-    const idx=(rt.optimizedIntermediateWaypointIndex&&rt.optimizedIntermediateWaypointIndex.length===mids.length)
-      ? rt.optimizedIntermediateWaypointIndex : mids.map((_,i)=>i);
     const sec=s=>parseInt(String(s||"0").replace("s",""),10)||0;
-    return {order:idx.map(i=>mids[i]), legs:(rt.legs||[]).map(l=>({sec:sec(l.duration),km:(l.distanceMeters||0)/1000})),
+    return {legs:(rt.legs||[]).map(l=>({sec:sec(l.duration),km:(l.distanceMeters||0)/1000})),
             sec:sec(rt.duration), km:(rt.distanceMeters||0)/1000, mode:"api", hasStart:true};
   }
-  async function googleGo(key, origin, girls, store){
-    return computeRoute(key, origin, store, girls);
-  }
-  async function googleBack(key, store, girls){
-    // 最後に誰の家で終わるかを全員分試して、一番早いものを選ぶ
-    let best=null;
-    for(const last of girls){
-      const mids=girls.filter(g=>g!==last);
-      const r=await computeRoute(key, store, last, mids);
-      r.order=[...r.order,last];
-      if(!best||r.sec<best.sec) best=r;
+
+  // 指定した順番で時間を計算(キーがあればGoogle、失敗・なしなら直線距離)
+  async function evalOrder(order, dir, origin){
+    const store=data.store, key=getKey();
+    let note="";
+    if(key){
+      try{
+        if(dir==="go"){
+          if(!origin) throw new Error("現在地が取れへん");
+          const r=await computeRoute(key, origin, store, order);
+          return Object.assign(r,{order:[...order]});
+        }else{
+          const r=await computeRoute(key, store, order[order.length-1], order.slice(0,-1));
+          return Object.assign(r,{order:[...order]});
+        }
+      }catch(e){ note="Google計算に失敗:"+e.message+" → 直線距離で仮計算した"; }
     }
-    return best;
+    const r = dir==="go" ? straightFixed(origin, order, store) : straightFixed(store, order, null);
+    if(dir==="go" && !origin && !note) note="現在地が取れへんかったから、1人目からお店までで計算した";
+    r.note=note;
+    return r;
   }
 
   // ---------- ルート計算ボタン ----------
   $("btnCalc").onclick = async () => {
     const store=data.store;
-    if(!store.address && !hasLL(store)){ toast("先に「設定」でお店を登録してな"); return; }
+    if(!hasLL(store)){ toast("先に「設定」でお店の位置を調べて保存してな"); return; }
     const girls=selected.map(id=>data.girls.find(g=>g.id===id)).filter(Boolean);
+    const missing=girls.filter(p=>!hasLL(p));
+    if(missing.length){ toast("位置が未登録:"+missing.map(p=>p.name).join("・")+"(女の子タブで調べてな)"); return; }
     const btn=$("btnCalc"); btn.disabled=true;
-    const key=getKey();
-    let route=null, note="", origin=null;
+    let origin=null;
     if(mode==="go"){ btn.textContent="現在地を取得中…"; origin=await currentPos(); }
-    try{
-      if(key){
-        btn.textContent="道路で計算中…";
-        if(mode==="go"){
-          if(!origin) throw new Error("現在地が取れへん");
-          route=await googleGo(key, origin, girls, store);
-        }else{
-          route=await googleBack(key, store, girls);
-        }
-      }
-    }catch(e){ note="Google計算に失敗:"+e.message+" → 直線距離で仮計算した"; route=null; }
-    if(!route){
-      const missing=[...girls,store].filter(p=>!hasLL(p));
-      if(missing.length){
-        toast("位置が未登録:"+missing.map(p=>p.name||"お店").join("・")+"(登録画面で調べてな)");
-        btn.disabled=false; btn.textContent="最短ルートを出す"; return;
-      }
-      route = mode==="go" ? straightRoute(origin, girls, store) : straightRoute(store, girls, null);
-      if(mode==="go" && !origin && !note) note="現在地が取れへんかったから、1人目からお店までで計算した";
-    }
-    route.note=note; route.dir=mode;
+    btn.textContent=getKey()?"道路で計算中…":"計算中…";
+    const order=orderByRule(girls, mode, store);
+    const route=await evalOrder(order, mode, origin);
+    route.dir=mode; route.origin=origin; route.manual=false;
     lastRoute=route;
     btn.disabled=false; btn.textContent="最短ルートを出す";
     renderResult();
   };
+
+  // ---------- 手で入れ替え ----------
+  let moving=false;
+  async function moveStop(i, delta){
+    const r=lastRoute; if(!r||moving) return;
+    const j=i+delta; if(j<0||j>=r.order.length) return;
+    moving=true;
+    const order=[...r.order]; [order[i],order[j]]=[order[j],order[i]];
+    $("routeList").querySelectorAll("[data-mv]").forEach(b=>b.disabled=true);
+    const nr=await evalOrder(order, r.dir, r.origin);
+    nr.dir=r.dir; nr.origin=r.origin; nr.manual=true;
+    lastRoute=nr; moving=false;
+    renderResult(true);
+  }
 
   const boardSec = () => (+data.board||0)*60;
 
@@ -689,11 +691,12 @@
       <div class="muted">今すぐ出たらお店に ${hm(eta)} ごろ着</div>${rough}`;
   }
 
-  function renderResult(){
+  function renderResult(keepScroll){
     const r=lastRoute;
     let mb = r.mode==="api"
-      ? '<span class="modebar mode-api">実際の道路で計算(混み具合込み)</span>'
+      ? '<span class="modebar mode-api">下道で計算(高速・有料なし/混み具合込み)</span>'
       : '<span class="modebar mode-line">仮計算(直線距離)</span>';
+    mb+=`<div class="muted">${r.manual?"手で並べ替えた順番":(r.dir==="go"?"お店から遠い順":"お店から近い順")}(▲▼で入れ替えできる)</div>`;
     if(r.note) mb+=`<div class="muted">${esc(r.note)}</div>`;
     $("modeBar").innerHTML=mb;
     renderDeadline();
@@ -710,17 +713,20 @@
     r.order.forEach((g,i)=>{
       const leg = r.hasStart ? r.legs[li++] : (i>0? r.legs[li++] : null);
       const eta = stepEta(leg);
-      html+=`<li><div class="i">${i+1}</div><div style="flex:1"><span class="eta">${eta}ごろ</span><b>${esc(g.name)}</b>${g.memo?` <span class="muted">📝${esc(g.memo)}</span>`:""}
-        <div class="leg">${leg?"↑ "+legTxt(leg):""}</div><div class="muted">${esc(g.address)}</div></div></li>`;
+      const n=r.order.length;
+      html+=`<li><div class="i">${i+1}</div><div style="flex:1;min-width:0"><span class="eta">${eta}ごろ</span><b>${esc(g.name)}</b>${g.memo?` <span class="muted">📝${esc(g.memo)}</span>`:""}
+        <div class="leg">${leg?"↑ "+legTxt(leg):""}</div><div class="muted">${esc(g.address)}</div></div>
+        ${n>1?`<div class="mv"><button data-mv="${i}" data-d="-1" ${i===0?"disabled":""}>▲</button><button data-mv="${i}" data-d="1" ${i===n-1?"disabled":""}>▼</button></div>`:""}</li>`;
     });
     if(r.dir==="go"){
       const last=r.legs[li]; if(last) t+=last.sec*1000;
       html+=`<li><div class="i">🏁</div><div style="flex:1"><span class="eta">${hm(new Date(t))}ごろ</span><b>${storeName}</b><div class="leg">${last?"↑ "+legTxt(last):""}</div></div></li>`;
     }
     $("routeList").innerHTML=html;
+    $("routeList").querySelectorAll("[data-mv]").forEach(b=>b.onclick=()=>moveStop(+b.dataset.mv, +b.dataset.d));
     $("totalLine").textContent=`合計 ${r.mode==="api"?"":"約"}${r.km.toFixed(1)}km・走る時間${min(r.sec)}分 + 乗り降り${r.order.length*(+data.board||0)}分(時刻は今すぐ出た場合)`;
     $("resultCard").style.display="block";
-    $("resultCard").scrollIntoView({behavior:"smooth",block:"start"});
+    if(!keepScroll) $("resultCard").scrollIntoView({behavior:"smooth",block:"start"});
   }
 
   // ---------- 記録を追加 ----------
