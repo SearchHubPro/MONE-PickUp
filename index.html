@@ -119,6 +119,16 @@
   .trip .who{flex:1;min-width:0}
   .checks label{display:flex;align-items:center;gap:10px;color:var(--text);font-size:16px;margin:0;padding:8px 0;border-bottom:1px solid var(--line)}
   .sun{color:var(--ng)}.sat{color:var(--accent)}
+  .seg.sm{margin:0 0 14px}.seg.sm button{padding:9px 0;font-size:14px}
+  .pay{margin-top:8px;padding:10px;border-radius:10px;background:var(--card2);font-size:14px}
+  .pay .wage{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+  .pay .wage button{border:1px solid var(--line);background:var(--card);color:var(--sub);border-radius:8px;padding:5px 10px;font-weight:700;font-family:inherit;font-size:14px}
+  .pay .wage button.on{background:var(--ok);border-color:var(--ok);color:#06210f}
+  .pay .wage button:disabled{opacity:.6}
+  .pay .net{font-weight:800;font-size:16px}
+  .lockbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .locked .trip{cursor:default}
+  .stats.money .n{font-size:18px}
 </style>
 </head>
 <body>
@@ -137,6 +147,11 @@
     <div class="card deadline">
       <div id="topLeft"><div class="muted">お店に着く時刻</div><b id="arriveLabel">20:50</b></div>
       <div style="text-align:right"><div class="muted">選んだ人数</div><b id="selCount">0</b></div>
+    </div>
+
+    <div class="seg sm" id="startSeg">
+      <button id="stCur" class="on-go">出発:現在地</button>
+      <button id="stHome">出発:自宅</button>
     </div>
 
     <div class="card">
@@ -158,6 +173,10 @@
 
   <!-- 記録 -->
   <section class="view" id="v-log">
+    <div class="lockbar">
+      <span class="muted" id="lockState"></span>
+      <button class="btn small" id="lLock">🔓 ロックする</button>
+    </div>
     <div class="month">
       <button class="btn small" id="mPrev">◀ 前の月</button>
       <b id="mLabel"></b>
@@ -168,6 +187,12 @@
       <div class="stat"><div class="n" id="stGo">0</div><div class="l">行き 延べ人数</div></div>
       <div class="stat"><div class="n" id="stBack">0</div><div class="l">帰り 延べ人数</div></div>
     </div>
+    <div class="stats money">
+      <div class="stat"><div class="n" id="stWage">0</div><div class="l">日当 合計</div></div>
+      <div class="stat"><div class="n" id="stGas">0</div><div class="l">ガソリン代 合計</div></div>
+      <div class="stat"><div class="n" id="stNet" style="color:var(--ok)">0</div><div class="l">差し引き 合計</div></div>
+    </div>
+    <div class="muted" id="stKm" style="margin:-6px 0 14px;text-align:center"></div>
     <div class="row" style="margin-bottom:14px">
       <button class="btn" id="lAdd" style="margin:0">＋ 手で追加</button>
       <button class="btn" id="lCsv" style="margin:0">この月をCSV保存</button>
@@ -187,6 +212,8 @@
       <div class="checks" id="lChecks"></div>
       <label>登録してない子(カンマ区切り)</label>
       <input id="lOther" placeholder="例:ゆい, さき" autocomplete="off">
+      <label>走行距離(km・任意)</label>
+      <input id="lKm" type="number" step="0.1" min="0" inputmode="decimal" placeholder="例:25.4">
       <div class="row">
         <button class="btn" id="lCancel">やめる</button>
         <button class="btn primary" id="lSave">保存</button>
@@ -195,7 +222,7 @@
     </div>
 
     <div class="card">
-      <h2>日ごとの記録(タップで修正)</h2>
+      <h2 id="logTitle">日ごとの記録(タップで修正)</h2>
       <div id="logList"></div>
     </div>
   </section>
@@ -238,6 +265,25 @@
       <label>位置(緯度, 経度)</label>
       <input id="sLatLng" inputmode="decimal" autocomplete="off">
       <button class="btn" id="sGeo">住所から位置を調べる</button>
+    </div>
+
+    <div class="card">
+      <h2>自宅</h2>
+      <label>自宅の住所</label>
+      <textarea id="hAddr" rows="2"></textarea>
+      <label>位置(緯度, 経度)</label>
+      <input id="hLatLng" inputmode="decimal" autocomplete="off">
+      <button class="btn" id="hGeo">住所から位置を調べる</button>
+      <p class="hint">行きの出発地に「自宅」を選べるようになる。帰りは最後の子を降ろしたあと自宅までを計算する。</p>
+    </div>
+
+    <div class="card">
+      <h2>ガソリン</h2>
+      <div class="row">
+        <div><label>ガソリン単価(円/L)</label><input id="sGas" type="number" min="0" inputmode="numeric" value="170"></div>
+        <div><label>燃費(km/L)</label><input id="sEff" type="number" min="1" step="0.1" inputmode="decimal" value="10"></div>
+      </div>
+      <p class="hint">記録した日の単価と燃費で計算する。ここを変えても、過去の日のガソリン代は変わらへん。</p>
     </div>
 
     <div class="card">
@@ -298,7 +344,9 @@
 
   // ---------- 保存まわり ----------
   const defaults = () => ({girls:[], store:{name:"",address:"",lat:null,lng:null},
-                           arrive:"20:50", buffer:5, board:2, logs:[]});
+                           arrive:"20:50", buffer:5, board:2, logs:[],
+                           home:{address:"",lat:null,lng:null}, gasPrice:170, fuelEff:10,
+                           days:{}, locked:false});
   function load(){
     try{ const s = localStorage.getItem(KEY_DATA); if(s) return Object.assign(defaults(), JSON.parse(s)); }catch(e){}
     return defaults();
@@ -312,7 +360,10 @@
 
   let data = load();
   if(!Array.isArray(data.logs)) data.logs=[];
-  let mode = "go";     // go=行き / back=帰り
+  if(!data.days || typeof data.days!=="object") data.days={};
+  if(!data.home) data.home={address:"",lat:null,lng:null};
+  let mode = "go";
+  let startFrom = "current"; // 行きの出発地:current=現在地 / home=自宅(アプリを開くたびに現在地に戻る)     // go=行き / back=帰り
   let selected = [];
   let lastRoute = null;
 
@@ -356,6 +407,12 @@
     const [h,m] = effArrive().split(":").map(Number);
     const d = new Date(); d.setHours(h,m,0,0); return d;
   }
+  const WAGES=[8000,4000];
+  function ensureDay(date){
+    if(!data.days[date]) data.days[date]={wage:8000, gas:+data.gasPrice||0, eff:+data.fuelEff||10};
+    return data.days[date];
+  }
+  const yen = n => "¥"+Math.round(n).toLocaleString("ja-JP");
   const sortedGirls = () => [...data.girls].sort((a,b)=>a.name.localeCompare(b.name,"ja"));
 
   // ---------- 画面切り替え ----------
@@ -513,6 +570,12 @@
     $("modeBack").className = m==="back" ? "on-back" : "";
     renderPick();
   }
+  function setStart(v){
+    if(v==="home" && !hasLL(data.home)){ toast("先に「設定」で自宅の位置を登録してな"); return; }
+    startFrom=v; lastRoute=null; $("resultCard").style.display="none"; renderPick();
+  }
+  $("stCur").onclick = () => setStart("current");
+  $("stHome").onclick = () => setStart("home");
   $("modeGo").onclick = () => setMode("go");
   $("modeBack").onclick = () => setMode("back");
   $("btnSameAsGo").onclick = () => {
@@ -535,9 +598,13 @@
       $("topLeft").querySelectorAll("[data-arr]").forEach(b=>b.onclick=()=>setTodayArrive(b.dataset.arr));
       $("pickTitle").textContent="今日迎えに行く子をタップ";
       $("btnSameAsGo").style.display="none";
+      $("startSeg").style.display="flex";
+      $("stCur").className = startFrom==="current" ? "on-go" : "";
+      $("stHome").className = startFrom==="home" ? "on-go" : "";
     }else{
-      $("topLeft").innerHTML='<div class="muted">帰り</div><b style="font-size:20px">お店 → 家</b>';
+      $("topLeft").innerHTML='<div class="muted">帰り</div><b style="font-size:20px">お店 → 家'+(hasLL(data.home)?' → 自宅':'')+'</b>';
       $("pickTitle").textContent="送って帰る子をタップ";
+      $("startSeg").style.display="none";
       const hasGo=data.logs.some(l=>l.date===bizDate() && l.dir==="go");
       $("btnSameAsGo").style.display = hasGo ? "block" : "none";
     }
@@ -602,17 +669,19 @@
   }
   // 決まった順番のまま、下道(高速・有料道路なし)で時間と距離を計算
   // まずナビと同じ細かい混み具合計算(TRAFFIC_AWARE_OPTIMAL)、失敗したら従来の計算でやり直す
-  async function computeRoute(key, origin, dest, mids){
-    try{ return await computeRouteWith("TRAFFIC_AWARE_OPTIMAL", key, origin, dest, mids); }
-    catch(e){ return await computeRouteWith("TRAFFIC_AWARE", key, origin, dest, mids); }
+  // departAt を渡すと「その時刻に出発した場合」の混み具合で計算する
+  async function computeRoute(key, origin, dest, mids, departAt){
+    try{ return await computeRouteWith("TRAFFIC_AWARE_OPTIMAL", key, origin, dest, mids, departAt); }
+    catch(e){ return await computeRouteWith("TRAFFIC_AWARE", key, origin, dest, mids, departAt); }
   }
-  async function computeRouteWith(pref, key, origin, dest, mids){
+  async function computeRouteWith(pref, key, origin, dest, mids, departAt){
     const body={
       origin: wp(origin), destination: wp(dest), intermediates: mids.map(wp),
       travelMode:"DRIVE", routingPreference:pref,
       routeModifiers:{avoidHighways:true, avoidTolls:true},
       languageCode:"ja-JP", regionCode:"jp", units:"METRIC"
     };
+    if(departAt) body.departureTime=departAt.toISOString();
     const r=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{
       method:"POST",
       headers:{"Content-Type":"application/json","X-Goog-Api-Key":key,
@@ -627,23 +696,47 @@
             sec:sec(rt.duration), km:(rt.distanceMeters||0)/1000, mode:"api", hasStart:true};
   }
 
+  const boardSec = () => (+data.board||0)*60;
+  // 行き:到着時刻に間に合う一番遅い出発時刻
+  function leaveByOf(r){
+    const need = r.sec + r.order.length*boardSec() + (+data.buffer||0)*60;
+    return new Date(targetArrival().getTime() - need*1000);
+  }
+  // 帰り:最後の子を降ろしたあと自宅まで行くか
+  const homeOn = () => hasLL(data.home);
+
   // 指定した順番で時間を計算(キーがあればGoogle、失敗・なしなら直線距離)
+  // 行き:origin=出発地(現在地か自宅) / 帰り:お店 → 子 → (自宅)
   async function evalOrder(order, dir, origin){
     const store=data.store, key=getKey();
     let note="";
+    const toHome = dir==="back" && homeOn();
     if(key){
       try{
         if(dir==="go"){
           if(!origin) throw new Error("現在地が取れへん");
-          const r=await computeRoute(key, origin, store, order);
-          return Object.assign(r,{order:[...order]});
+          // ① 今出発した場合で計算 → 出発時刻を出す
+          let r=await computeRoute(key, origin, store, order);
+          r.order=[...order];
+          // ② その出発時刻の混み具合でもう一回計算(出発が5分以上先のときだけ)
+          const lb=leaveByOf(r);
+          if(lb.getTime()-Date.now() > 5*60000){
+            try{
+              const r2=await computeRoute(key, origin, store, order, lb);
+              r2.order=[...order]; r2.departAt=lb.getTime(); r=r2;
+            }catch(e){ /* ①の結果を使う */ }
+          }
+          return r;
         }else{
-          const r=await computeRoute(key, store, order[order.length-1], order.slice(0,-1));
-          return Object.assign(r,{order:[...order]});
+          const r = toHome
+            ? await computeRoute(key, store, data.home, order)
+            : await computeRoute(key, store, order[order.length-1], order.slice(0,-1));
+          return Object.assign(r,{order:[...order], toHome});
         }
       }catch(e){ note="Google計算に失敗:"+e.message+" → 直線距離で仮計算した"; }
     }
-    const r = dir==="go" ? straightFixed(origin, order, store) : straightFixed(store, order, null);
+    const r = dir==="go" ? straightFixed(origin, order, store) : straightFixed(store, order, toHome?data.home:null);
+    r.toHome=toHome;
     if(dir==="go" && !origin && !note) note="現在地が取れへんかったから、1人目からお店までで計算した";
     r.note=note;
     return r;
@@ -657,12 +750,15 @@
     const missing=girls.filter(p=>!hasLL(p));
     if(missing.length){ toast("位置が未登録:"+missing.map(p=>p.name).join("・")+"(女の子タブで調べてな)"); return; }
     const btn=$("btnCalc"); btn.disabled=true;
-    let origin=null;
-    if(mode==="go"){ btn.textContent="現在地を取得中…"; origin=await currentPos(); }
+    let origin=null, fromHome=false;
+    if(mode==="go"){
+      if(startFrom==="home" && hasLL(data.home)){ origin={...data.home}; fromHome=true; }
+      else { btn.textContent="現在地を取得中…"; origin=await currentPos(); }
+    }
     btn.textContent=getKey()?"道路で計算中…":"計算中…";
     const order=orderByRule(girls, mode, store);
     const route=await evalOrder(order, mode, origin);
-    route.dir=mode; route.origin=origin; route.manual=false;
+    route.dir=mode; route.origin=origin; route.fromHome=fromHome; route.manual=false;
     lastRoute=route;
     btn.disabled=false; btn.textContent="最短ルートを出す";
     renderResult();
@@ -677,25 +773,28 @@
     const order=[...r.order]; [order[i],order[j]]=[order[j],order[i]];
     $("routeList").querySelectorAll("[data-mv]").forEach(b=>b.disabled=true);
     const nr=await evalOrder(order, r.dir, r.origin);
-    nr.dir=r.dir; nr.origin=r.origin; nr.manual=true;
+    nr.dir=r.dir; nr.origin=r.origin; nr.fromHome=r.fromHome; nr.manual=true;
     lastRoute=nr; moving=false;
     renderResult(true);
   }
 
-  const boardSec = () => (+data.board||0)*60;
+  // 帰りで自宅まで行く場合、最後の子を降ろすまでの時間
+  const dropSec = r => r.toHome && r.legs.length ? r.sec - r.legs[r.legs.length-1].sec : r.sec;
+  // 記録用の走行距離(直線の仮計算は1.4倍して道のりの目安にする)
+  const roadKm = r => r.mode==="api" ? r.km : r.km*1.4;
 
   function renderDeadline(){
     const r=lastRoute; if(!r) return;
     const n=r.order.length, now=new Date();
     const rough = r.mode==="line" ? '<div class="muted">※直線距離からの大ざっぱな目安。APIキーを入れると正確になる</div>' : "";
     if(r.dir==="back"){
-      const end=new Date(now.getTime()+(r.sec+n*boardSec())*1000);
+      const end=new Date(now.getTime()+(dropSec(r)+n*boardSec())*1000);
+      const home=r.toHome ? `<div class="muted">自宅には ${hm(new Date(now.getTime()+(r.sec+n*boardSec())*1000))} ごろ着</div>` : "";
       $("deadlineBox").innerHTML=`<div class="muted">今お店を出たら</div>
-        <div class="big-time" style="color:var(--back)">${hm(end)} ごろ全員送り終わり</div>${rough}`;
+        <div class="big-time" style="color:var(--back)">${hm(end)} ごろ全員送り終わり</div>${home}${rough}`;
       return;
     }
-    const need = r.sec + n*boardSec() + (+data.buffer||0)*60;
-    const leaveBy = new Date(targetArrival().getTime() - need*1000);
+    const leaveBy = leaveByOf(r);
     const leftMin = Math.floor((leaveBy-now)/60000);
     const eta = new Date(now.getTime() + (r.sec + n*boardSec())*1000);
     let cls="status-ok", msg;
@@ -714,6 +813,7 @@
     let mb = r.mode==="api"
       ? '<span class="modebar mode-api">下道で計算(高速・有料なし/混み具合込み)</span>'
       : '<span class="modebar mode-line">仮計算(直線距離)</span>';
+    if(r.departAt) mb+=`<div class="muted">${hm(new Date(r.departAt))}に出発したときの混み具合で計算</div>`;
     mb+=`<div class="muted">${r.manual?"手で並べ替えた順番":(r.dir==="go"?"お店から遠い順":"お店から近い順")}(▲▼で入れ替えできる)</div>`;
     if(r.note) mb+=`<div class="muted">${esc(r.note)}</div>`;
     $("modeBar").innerHTML=mb;
@@ -721,10 +821,13 @@
     const min=s=>Math.max(1,Math.round(s/60));
     const legTxt=l=>l?`${r.mode==="api"?"":"約"}${l.km.toFixed(1)}km・${min(l.sec)}分`:"";
     const storeName=esc(data.store.name||"お店");
-    let html="", li=0, t=Date.now();
+    // 時刻の起点:行きで出発時刻がまだ先なら出発時刻、それ以外は今
+    let base=Date.now(), baseTxt="今すぐ出た場合";
+    if(r.dir==="go"){ const lb=leaveByOf(r).getTime(); if(lb>base){ base=lb; baseTxt=hm(new Date(lb))+"に出発した場合"; } }
+    let html="", li=0, t=base;
     const stepEta = leg => { if(leg){ t+=leg.sec*1000; } const s=hm(new Date(t)); t+=boardSec()*1000; return s; };
     if(r.dir==="go"){
-      if(r.hasStart) html+=`<li><div class="i">●</div><div><b>現在地</b></div></li>`;
+      if(r.hasStart) html+=`<li><div class="i">${r.fromHome?"🏠":"●"}</div><div><b>${r.fromHome?"自宅":"現在地"}</b> <span class="muted">(${hm(new Date(base))}出発)</span></div></li>`;
     }else{
       html+=`<li><div class="i">🏁</div><div><b>${storeName}</b> <span class="muted">(出発)</span></div></li>`;
     }
@@ -736,24 +839,26 @@
         <div class="leg">${leg?"↑ "+legTxt(leg):""}</div><div class="muted">${esc(g.address)}</div></div>
         ${n>1?`<div class="mv"><button data-mv="${i}" data-d="-1" ${i===0?"disabled":""}>▲</button><button data-mv="${i}" data-d="1" ${i===n-1?"disabled":""}>▼</button></div>`:""}</li>`;
     });
-    if(r.dir==="go"){
+    if(r.dir==="go" || r.toHome){
       const last=r.legs[li]; if(last) t+=last.sec*1000;
-      html+=`<li><div class="i">🏁</div><div style="flex:1"><span class="eta">${hm(new Date(t))}ごろ</span><b>${storeName}</b><div class="leg">${last?"↑ "+legTxt(last):""}</div></div></li>`;
+      const nm = r.dir==="go" ? storeName : "自宅";
+      html+=`<li><div class="i">${r.dir==="go"?"🏁":"🏠"}</div><div style="flex:1"><span class="eta">${hm(new Date(t))}ごろ</span><b>${nm}</b><div class="leg">${last?"↑ "+legTxt(last):""}</div></div></li>`;
     }
     $("routeList").innerHTML=html;
     $("routeList").querySelectorAll("[data-mv]").forEach(b=>b.onclick=()=>moveStop(+b.dataset.mv, +b.dataset.d));
-    $("totalLine").textContent=`合計 ${r.mode==="api"?"":"約"}${r.km.toFixed(1)}km・走る時間${min(r.sec)}分 + 乗り降り${r.order.length*(+data.board||0)}分(時刻は今すぐ出た場合)`;
+    $("totalLine").textContent=`合計 ${r.mode==="api"?"":"約"}${r.km.toFixed(1)}km・走る時間${min(r.sec)}分 + 乗り降り${r.order.length*(+data.board||0)}分(時刻は${baseTxt})`;
     $("resultCard").style.display="block";
     if(!keepScroll) $("resultCard").scrollIntoView({behavior:"smooth",block:"start"});
   }
 
   // ---------- 記録を追加 ----------
-  function addLog(dir, names){
+  function addLog(dir, names, km){
     const date=bizDate();
+    ensureDay(date);
     const key=[...names].sort().join("|");
     const dup=data.logs.find(l=>l.date===date && l.dir===dir && [...l.names].sort().join("|")===key);
-    if(dup) return "dup";
-    data.logs.push({id:uid(), date, dir, names:[...names], at:new Date().toISOString()});
+    if(dup){ dup.km=Math.round(km*10)/10; save(); return "dup"; } // 押し直したときは距離だけ最新にする
+    data.logs.push({id:uid(), date, dir, names:[...names], km:Math.round(km*10)/10, at:new Date().toISOString()});
     save(); return "ok";
   }
 
@@ -762,17 +867,19 @@
   $("btnNav").onclick = () => {
     const r=lastRoute; if(!r) return;
     const names=r.order.map(g=>g.name);
-    const res=addLog(r.dir, names);
+    const res=addLog(r.dir, names, roadKm(r));
     const d=parseYmd(bizDate());
-    toast(res==="dup" ? "もう記録済みやからそのままナビ開くで"
+    toast(res==="dup" ? "もう記録済みやからそのままナビ開くで(距離は最新にした)"
       : `${d.getMonth()+1}/${d.getDate()} ${r.dir==="go"?"行き":"帰り"} ${names.length}人を記録したで`);
-    let dest, mids;
-    if(r.dir==="go"){ dest=data.store; mids=r.order; }
+    let dest, mids, origin=null;
+    if(r.dir==="go"){ dest=data.store; mids=r.order; if(r.fromHome) origin=data.home; }
+    else if(r.toHome){ dest=data.home; mids=r.order; }
     else { dest=r.order[r.order.length-1]; mids=r.order.slice(0,-1); }
     let url="https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate"+
       "&destination="+encodeURIComponent(q(dest));
+    if(origin) url+="&origin="+encodeURIComponent(q(origin)); // 自宅から(省略すると現在地から)
     if(mids.length) url+="&waypoints="+encodeURIComponent(mids.map(q).join("|"));
-    setTimeout(()=>{ location.href=url; }, 700); // 出発地を省略=現在地から
+    setTimeout(()=>{ location.href=url; }, 700);
   };
   $("btnClear").onclick = () => { selected=[]; lastRoute=null; $("resultCard").style.display="none"; renderPick(); $("scroller").scrollTo(0,0); };
 
@@ -784,25 +891,66 @@
   $("mPrev").onclick = () => { viewMonth.m--; if(viewMonth.m<0){viewMonth.m=11;viewMonth.y--;} renderLog(); };
   $("mNext").onclick = () => { viewMonth.m++; if(viewMonth.m>11){viewMonth.m=0;viewMonth.y++;} renderLog(); };
 
+  // その日のお金(日当・距離・ガソリン代・差し引き)。単価と燃費はその日に保存した値を使う
+  function dayMoney(date, logs){
+    const dd=ensureDay(date);
+    const km=logs.filter(l=>l.date===date).reduce((s,l)=>s+(+l.km||0),0);
+    const gas=Math.round(km/(+dd.eff||10)*(+dd.gas||0));
+    return {wage:+dd.wage||0, km, gas, net:(+dd.wage||0)-gas, gasPrice:+dd.gas||0, eff:+dd.eff||10};
+  }
+
+  // ---------- ロック ----------
+  $("lLock").onclick = () => {
+    if(data.locked){
+      if(!confirm("ロックを外す?(記録の修正・削除ができるようになる)")) return;
+      data.locked=false;
+    }else{
+      data.locked=true; $("lForm").style.display="none";
+    }
+    save(); renderLog();
+  };
+
   function renderLog(){
+    const locked=!!data.locked;
+    $("v-log").classList.toggle("locked",locked);
+    $("lLock").textContent = locked ? "🔒 ロック中(タップで解除)" : "🔓 ロックする";
+    $("lockState").textContent = locked ? "修正・削除はできへん" : "";
+    $("lAdd").disabled=locked;
+    $("logTitle").textContent = locked ? "日ごとの記録" : "日ごとの記録(タップで修正)";
     $("mLabel").textContent=`${viewMonth.y}年${viewMonth.m+1}月`;
     const logs=monthLogs();
     const days=[...new Set(logs.map(l=>l.date))];
+    let created=false;
+    days.forEach(d=>{ if(!data.days[d]){ ensureDay(d); created=true; } });
+    if(created) save();
     $("stDays").textContent=days.length;
     $("stGo").textContent=logs.filter(l=>l.dir==="go").reduce((s,l)=>s+l.names.length,0);
     $("stBack").textContent=logs.filter(l=>l.dir==="back").reduce((s,l)=>s+l.names.length,0);
+    const tot=days.map(d=>dayMoney(d,logs)).reduce((a,m)=>({wage:a.wage+m.wage,gas:a.gas+m.gas,net:a.net+m.net,km:a.km+m.km}),{wage:0,gas:0,net:0,km:0});
+    $("stWage").textContent=yen(tot.wage); $("stGas").textContent=yen(tot.gas); $("stNet").textContent=yen(tot.net);
+    $("stKm").textContent=`走行距離 合計 ${tot.km.toFixed(1)}km`;
     if(!days.length){ $("logList").innerHTML='<div class="empty">この月の記録はまだないで</div>'; return; }
     $("logList").innerHTML=[...days].reverse().map(day=>{
-      const d=parseYmd(day), w=d.getDay();
+      const d=parseYmd(day), w=d.getDay(), m=dayMoney(day,logs);
       const trips=logs.filter(l=>l.date===day).map(l=>`
         <div class="trip" data-log="${l.id}">
           <span class="badge ${l.dir==="go"?"b-go":"b-back"}">${l.dir==="go"?"行き":"帰り"}</span>
-          <div class="who"><b>${l.names.length}人</b> <span class="muted">${esc(l.names.join("・"))}</span></div>
+          <div class="who"><b>${l.names.length}人</b> <span class="muted">${esc(l.names.join("・"))}</span>
+            <div class="muted">${l.km!=null&&l.km!==""?(+l.km).toFixed(1)+"km":"距離なし"}</div></div>
           <span class="muted">${l.manual?"手入力":(l.at?hm(new Date(l.at)):"")}</span>
         </div>`).join("");
-      return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}</div>`;
+      const pay=`<div class="pay">
+          <div class="wage"><span class="muted">日当</span>${WAGES.map(v=>`<button data-day="${day}" data-wage="${v}" class="${m.wage===v?"on":""}" ${locked?"disabled":""}>${v.toLocaleString()}円</button>`).join("")}</div>
+          <div>走行距離 ${m.km.toFixed(1)}km / ガソリン代 ${yen(m.gas)} <span class="muted">(${m.gasPrice}円/L・${m.eff}km/L)</span></div>
+          <div class="net">差し引き日当 ${yen(m.net)}</div>
+        </div>`;
+      return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}</div>`;
     }).join("");
-    $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>openLogForm(el.dataset.log));
+    if(!locked) $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>openLogForm(el.dataset.log));
+    $("logList").querySelectorAll("[data-wage]").forEach(b=>b.onclick=()=>{
+      if(data.locked) return;
+      ensureDay(b.dataset.day).wage=+b.dataset.wage; save(); renderLog();
+    });
   }
 
   let formDir="go";
@@ -811,6 +959,7 @@
   $("lBack").onclick=()=>setFormDir("back");
 
   function openLogForm(id){
+    if(data.locked){ toast("ロック中やで"); return; }
     const l=id ? data.logs.find(x=>x.id===id) : null;
     $("lId").value=l?l.id:"";
     $("lFormTitle").textContent=l?"記録を修正":"記録を追加";
@@ -822,6 +971,7 @@
       : '<div class="muted">登録済みの子はおらん</div>';
     const regNames=new Set(reg.map(g=>g.name));
     $("lOther").value=[...names].filter(n=>!regNames.has(n)).join(", ");
+    $("lKm").value = l && l.km!=null && l.km!=="" ? l.km : "";
     $("lDel").style.display=l?"block":"none";
     $("lForm").style.display="block";
     $("lForm").scrollIntoView({behavior:"smooth",block:"start"});
@@ -829,22 +979,28 @@
   $("lAdd").onclick=()=>openLogForm(null);
   $("lCancel").onclick=()=>{ $("lForm").style.display="none"; };
   $("lSave").onclick=()=>{
+    if(data.locked){ toast("ロック中やで"); return; }
     const date=$("lDate").value;
     if(!date){ toast("日付を入れてな"); return; }
     const names=[...$("lChecks").querySelectorAll("input:checked")].map(c=>c.value)
       .concat($("lOther").value.split(/[,、，]/).map(s=>s.trim()).filter(Boolean));
     if(!names.length){ toast("誰か1人は選んでな"); return; }
+    const kmRaw=$("lKm").value.trim();
+    const km = kmRaw==="" ? null : Math.max(0, Math.round(parseFloat(kmRaw)*10)/10);
+    if(kmRaw!=="" && !isFinite(km)){ toast("距離は数字で入れてな"); return; }
+    ensureDay(date);
     const id=$("lId").value;
     if(id){
-      const l=data.logs.find(x=>x.id===id); if(l){ l.date=date; l.dir=formDir; l.names=names; }
+      const l=data.logs.find(x=>x.id===id); if(l){ l.date=date; l.dir=formDir; l.names=names; l.km=km; }
     }else{
-      data.logs.push({id:uid(), date, dir:formDir, names, at:new Date().toISOString(), manual:true});
+      data.logs.push({id:uid(), date, dir:formDir, names, km, at:new Date().toISOString(), manual:true});
     }
     save();
     const d=parseYmd(date); viewMonth={y:d.getFullYear(), m:d.getMonth()};
     $("lForm").style.display="none"; renderLog(); toast("記録を保存したで");
   };
   $("lDel").onclick=()=>{
+    if(data.locked){ toast("ロック中やで"); return; }
     const id=$("lId").value; if(!id) return;
     if(!confirm("この記録を削除する?")) return;
     data.logs=data.logs.filter(x=>x.id!==id); save();
@@ -863,17 +1019,27 @@
   $("lCsv").onclick=()=>{
     const logs=monthLogs();
     if(!logs.length){ toast("この月の記録はないで"); return; }
-    const rows=[["日付","曜日","区分","人数","名前","記録時刻"]];
+    const days=[...new Set(logs.map(l=>l.date))];
+    const rows=[["■日ごとの集計"],["日付","曜日","行き人数","帰り人数","走行距離(km)","日当","ガソリン単価(円/L)","燃費(km/L)","ガソリン代","差し引き日当"]];
+    const tot={wage:0,gas:0,net:0,km:0};
+    days.forEach(day=>{
+      const d=parseYmd(day), m=dayMoney(day,logs);
+      const cnt=dir=>logs.filter(l=>l.date===day&&l.dir===dir).reduce((s,l)=>s+l.names.length,0);
+      rows.push([day, WD[d.getDay()], cnt("go"), cnt("back"), m.km.toFixed(1), m.wage, m.gasPrice, m.eff, m.gas, m.net]);
+      tot.wage+=m.wage; tot.gas+=m.gas; tot.net+=m.net; tot.km+=m.km;
+    });
+    rows.push(["合計","","","",tot.km.toFixed(1),tot.wage,"","",tot.gas,tot.net]);
+    rows.push([]);
+    rows.push(["■送迎の明細"],["日付","曜日","区分","人数","名前","走行距離(km)","記録時刻"]);
     logs.forEach(l=>{
       const d=parseYmd(l.date);
-      rows.push([l.date, WD[d.getDay()], l.dir==="go"?"行き":"帰り", l.names.length, l.names.join("・"), l.manual?"手入力":(l.at?hm(new Date(l.at)):"")]);
+      rows.push([l.date, WD[d.getDay()], l.dir==="go"?"行き":"帰り", l.names.length, l.names.join("・"),
+        l.km!=null&&l.km!==""?(+l.km).toFixed(1):"", l.manual?"手入力":(l.at?hm(new Date(l.at)):"")]);
     });
-    const go=logs.filter(l=>l.dir==="go").reduce((s,l)=>s+l.names.length,0);
-    const back=logs.filter(l=>l.dir==="back").reduce((s,l)=>s+l.names.length,0);
     rows.push([]);
-    rows.push(["送迎した日数", new Set(logs.map(l=>l.date)).size]);
-    rows.push(["行き 延べ人数", go]);
-    rows.push(["帰り 延べ人数", back]);
+    rows.push(["送迎した日数", days.length]);
+    rows.push(["行き 延べ人数", logs.filter(l=>l.dir==="go").reduce((s,l)=>s+l.names.length,0)]);
+    rows.push(["帰り 延べ人数", logs.filter(l=>l.dir==="back").reduce((s,l)=>s+l.names.length,0)]);
     const csv="﻿"+rows.map(r=>r.map(csvCell).join(",")).join("\r\n");
     download(`送迎記録_${monthKey()}.csv`, csv, "text/csv");
   };
@@ -883,6 +1049,8 @@
     $("sName").value=data.store.name||""; $("sAddr").value=data.store.address||"";
     $("sLatLng").value=fmtLL(data.store);
     $("sArrive").value=data.arrive; $("sBuffer").value=data.buffer; $("sBoard").value=data.board;
+    $("hAddr").value=data.home.address||""; $("hLatLng").value=fmtLL(data.home);
+    $("sGas").value=data.gasPrice; $("sEff").value=data.fuelEff;
     $("sKey").value=getKey(); renderKeyState();
   }
   function renderKeyState(){
@@ -891,11 +1059,20 @@
       : '<span class="badge b-warn">キーなし:直線距離の仮計算モード</span>';
   }
   $("sGeo").onclick = () => geoInto($("sAddr"), $("sLatLng"), $("sGeo"));
+  $("hGeo").onclick = () => geoInto($("hAddr"), $("hLatLng"), $("hGeo"));
   $("sKeyShow").onclick = () => { const k=$("sKey"); k.type = k.type==="password"?"text":"password"; $("sKeyShow").textContent = k.type==="password"?"表示":"隠す"; };
   $("sKeyDel").onclick = () => { if(confirm("APIキーを消す?")){ setKey(""); $("sKey").value=""; renderKeyState(); toast("キーを消したで"); } };
   $("sSave").onclick = () => {
     const llRaw=$("sLatLng").value.trim(), ll=parseLatLng(llRaw);
     if(llRaw && !ll){ toast("お店の位置の形が変やで"); return; }
+    const hRaw=$("hLatLng").value.trim(), hll=parseLatLng(hRaw);
+    if(hRaw && !hll){ toast("自宅の位置の形が変やで"); return; }
+    const gas=parseFloat($("sGas").value), eff=parseFloat($("sEff").value);
+    if(!(gas>=0)){ toast("ガソリン単価は数字で入れてな"); return; }
+    if(!(eff>0)){ toast("燃費は0より大きい数字で入れてな"); return; }
+    data.home={address:$("hAddr").value.trim(), lat:hll?hll.lat:null, lng:hll?hll.lng:null};
+    data.gasPrice=gas; data.fuelEff=eff;
+    if(!hasLL(data.home) && startFrom==="home") startFrom="current";
     data.store={name:$("sName").value.trim(), address:$("sAddr").value.trim(),
                 lat:ll?ll.lat:null, lng:ll?ll.lng:null};
     data.arrive=$("sArrive").value||"20:50";
@@ -908,7 +1085,7 @@
   // ---------- バックアップ ----------
   $("bExport").onclick = () => {
     download(`sougei-backup-${ymd(new Date()).replace(/-/g,"")}.json`,
-      JSON.stringify({app:"sougei",ver:2,savedAt:new Date().toISOString(),data},null,2), "application/json");
+      JSON.stringify({app:"sougei",ver:3,savedAt:new Date().toISOString(),data},null,2), "application/json");
   };
   $("bImport").onclick = () => $("bFile").click();
   $("bFile").onchange = async e => {
@@ -919,6 +1096,8 @@
       if(!Array.isArray(d.girls)) throw new Error("形式が違う");
       if(!confirm(`女の子${d.girls.length}人・記録${(d.logs||[]).length}件で上書きする?`)) return;
       data=Object.assign(defaults(), d); if(!Array.isArray(data.logs)) data.logs=[];
+      if(!data.days || typeof data.days!=="object") data.days={};
+      if(!data.home) data.home={address:"",lat:null,lng:null};
       selected=[]; lastRoute=null;
       save(); renderAll(); fillSettings(); toast("読み込んだで");
     }catch(err){ toast("読み込めへんかった:"+err.message); }
