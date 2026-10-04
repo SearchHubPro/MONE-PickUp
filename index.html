@@ -135,6 +135,10 @@
   .pay .hourly{font-weight:800;font-size:16px;color:var(--ok)}
   .pay .work button{flex:none;border:1px solid var(--line);background:var(--card)}
   #homeState{margin-top:8px;text-align:center}
+  #homeCard .row button{padding:16px 6px;font-size:17px}
+  .tmrow{display:flex;gap:8px;align-items:center}
+  .tmrow input{flex:1;min-width:0}
+  .tmrow button{flex:none;border:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -182,7 +186,10 @@
 
     <!-- 仕事が終わって家に着いたら押す -->
     <div class="card" id="homeCard">
-      <button class="btn big" id="btnHome" style="margin-top:0">🏠 帰宅した</button>
+      <div class="row">
+        <button class="btn big" id="btnStart" style="margin-top:0">🚗 出発した</button>
+        <button class="btn big" id="btnHome" style="margin-top:0">🏠 帰宅した</button>
+      </div>
       <div class="muted" id="homeState"></div>
     </div>
   </section>
@@ -208,8 +215,11 @@
       <div class="stat"><div class="n" id="stGas">0</div><div class="l">ガソリン代 合計</div></div>
       <div class="stat"><div class="n" id="stNet" style="color:var(--ok)">0</div><div class="l">差し引き 合計</div></div>
     </div>
-    <div class="muted" id="stKm" style="margin:-6px 0 4px;text-align:center"></div>
-    <div class="muted" id="stWork" style="margin:0 0 14px;text-align:center"></div>
+    <div class="stats money">
+      <div class="stat"><div class="n" id="stWorkH">—</div><div class="l">働いた時間 合計</div></div>
+      <div class="stat"><div class="n" id="stHourly" style="color:var(--ok)">—</div><div class="l" id="stHourlyL">平均時給</div></div>
+    </div>
+    <div class="muted" id="stKm" style="margin:-6px 0 14px;text-align:center"></div>
     <div class="row" style="margin-bottom:14px">
       <button class="btn" id="lAdd" style="margin:0">＋ 手で追加</button>
       <button class="btn" id="lCsv" style="margin:0">この月をCSV保存</button>
@@ -239,15 +249,18 @@
     </div>
 
     <div class="card" id="hmForm" style="display:none">
-      <h2 id="hmTitle">帰宅時刻を直す</h2>
+      <h2 id="hmTitle">時刻を直す</h2>
       <input type="hidden" id="hmDay">
-      <label>帰宅時刻(夜中0時〜朝6時は、その日の夜が明けた時刻として数える)</label>
-      <input type="time" id="hmTime">
+      <label>出発時刻</label>
+      <div class="tmrow"><input type="time" id="hmStart"><button class="btn small" id="hmStartClr">消す</button></div>
+      <p class="hint" id="hmStartHint"></p>
+      <label>帰宅時刻</label>
+      <div class="tmrow"><input type="time" id="hmTime"><button class="btn small" id="hmTimeClr">消す</button></div>
+      <p class="hint">夜中0時〜朝6時の時刻は、その日の夜が明けた時刻(次の日付)として数える。</p>
       <div class="row">
         <button class="btn" id="hmCancel">やめる</button>
         <button class="btn primary" id="hmSave">保存</button>
       </div>
-      <button class="btn danger" id="hmDel">帰宅時刻を消す</button>
     </div>
 
     <div class="card">
@@ -920,29 +933,30 @@
     if(mids.length) url+="&waypoints="+encodeURIComponent(mids.map(q).join("|"));
     setTimeout(()=>{ location.href=url; }, 700);
   };
-  // ---------- 帰宅した ----------
-  // 押した時刻をその日(朝6時までは前の日)の帰宅時刻として保存。押し直したら最新に上書き。ロック中でも押せる
+  // ---------- 出発した/帰宅した ----------
+  // 押した時刻をその日(朝6時までは前の日)の出発時刻(days[日付].startAt)/帰宅時刻(homeAt)として保存。
+  // 押し直したら最新に上書き。ロック中でも押せる
   function renderHomeState(){
-    const day=bizDate(), dd=data.days[day];
-    if(dd && dd.homeAt){
-      const w=workOf(day), m=dayMoney(day,data.logs), hr=hourlyOf(m.net,w.min);
-      $("homeState").textContent = `今日の帰宅 ${hm(new Date(dd.homeAt))} 記録済み` +
-        (w.min ? `(${fmtDur(w.min)}・時給 ${yen(hr)})` : "");
-    }else{
-      $("homeState").textContent = "仕事が終わって家に着いたら押してな";
-    }
+    const day=bizDate(), dd=data.days[day]||{};
+    if(!dd.startAt && !dd.homeAt){ $("homeState").textContent="家を出るときに出発、家に着いたら帰宅を押してな"; return; }
+    const w=workOf(day);
+    let t=`今日 出発 ${dd.startAt?hm(new Date(dd.startAt)):"—"} / 帰宅 ${dd.homeAt?hm(new Date(dd.homeAt)):"—"}`;
+    if(w.min){ const m=dayMoney(day,data.logs); t+=`(${fmtDur(w.min)}・時給 ${yen(hourlyOf(m.net,w.min))})`; }
+    $("homeState").textContent=t;
   }
-  $("btnHome").onclick = () => {
-    const day=bizDate(), now=new Date();
-    const again=!!(data.days[day] && data.days[day].homeAt);
-    ensureDay(day).homeAt=now.toISOString();
+  function stamp(kind){
+    const day=bizDate(), now=new Date(), key=kind==="start"?"startAt":"homeAt";
+    const again=!!(data.days[day] && data.days[day][key]);
+    ensureDay(day)[key]=now.toISOString();
     if(!save()) return;
-    const w=workOf(day), m=dayMoney(day,data.logs), hr=hourlyOf(m.net,w.min);
     const d=parseYmd(day);
-    toast(`${d.getMonth()+1}/${d.getDate()} 帰宅 ${hm(now)} を${again?"上書き":"記録"}したで` +
-      (w.min ? `(${fmtDur(w.min)}・時給 ${yen(hr)})` : ""));
+    let msg=`${d.getMonth()+1}/${d.getDate()} ${kind==="start"?"出発":"帰宅"} ${hm(now)} を${again?"上書き":"記録"}したで`;
+    if(kind==="home"){ const w=workOf(day); if(w.min){ const m=dayMoney(day,data.logs); msg+=`(${fmtDur(w.min)}・時給 ${yen(hourlyOf(m.net,w.min))})`; } }
+    toast(msg);
     renderHomeState();
-  };
+  }
+  $("btnStart").onclick = () => stamp("start");
+  $("btnHome").onclick = () => stamp("home");
 
   $("btnClear").onclick = () => { selected=[]; lastRoute=null; $("resultCard").style.display="none"; renderPick(); $("scroller").scrollTo(0,0); };
 
@@ -962,18 +976,25 @@
     return {wage:+dd.wage||0, km, gas, net:(+dd.wage||0)-gas, gasPrice:+dd.gas||0, eff:+dd.eff||10};
   }
 
-  // その日の働いた時間:行きで最初に「ナビ開始」を押した時刻 〜 「帰宅した」を押した時刻(days[日付].homeAt)
-  // 手で追加した記録の時刻は入力した時刻なので使わない。どちらかがない日は時給を出さない(「—」)
+  // その日の働いた時間:出発 〜 「帰宅した」を押した時刻(days[日付].homeAt)
+  // 出発は ①「出発した」を押した(または手で直した)時刻 startAt → ②なければ、その日に最初に「ナビ開始」を押した時刻
+  //   (行きがあれば行き、帰りだけの日は帰り。手で追加した記録の時刻は入力した時刻なので使わない) → ③どちらもなければなし
+  // 出発か帰宅がない日、または時間がおかしい日(0分以下・24時間以上)は時給を出さない(「—」)
   function workOf(date){
     const dd=data.days[date]||{};
-    const starts=data.logs.filter(l=>l.date===date && l.dir==="go" && !l.manual && l.at)
-      .map(l=>new Date(l.at).getTime()).filter(t=>isFinite(t));
-    const start = starts.length ? Math.min(...starts) : null;
+    const sa = dd.startAt ? new Date(dd.startAt).getTime() : NaN;
+    let start=null, src=null;
+    if(isFinite(sa)){ start=sa; src="btn"; }
+    else{
+      const navs=data.logs.filter(l=>l.date===date && !l.manual && l.at)
+        .map(l=>new Date(l.at).getTime()).filter(t=>isFinite(t));
+      if(navs.length){ start=Math.min(...navs); src="nav"; }
+    }
     const h = dd.homeAt ? new Date(dd.homeAt).getTime() : NaN;
     const home = isFinite(h) ? h : null;
     let min=null;
     if(start!=null && home!=null){ const m=Math.round((home-start)/60000); if(m>0 && m<24*60) min=m; }
-    return {start, home, min};
+    return {start, src, home, min};
   }
   const fmtDur = m => `${Math.floor(m/60)}時間${pad(m%60)}分`;
   const hourlyOf = (net, min) => min ? Math.round(net/(min/60)) : null;
@@ -1008,12 +1029,12 @@
     const tot=days.map(d=>dayMoney(d,logs)).reduce((a,m)=>({wage:a.wage+m.wage,gas:a.gas+m.gas,net:a.net+m.net,km:a.km+m.km}),{wage:0,gas:0,net:0,km:0});
     $("stWage").textContent=yen(tot.wage); $("stGas").textContent=yen(tot.gas); $("stNet").textContent=yen(tot.net);
     $("stKm").textContent=`走行距離 合計 ${tot.km.toFixed(1)}km`;
-    // 平均時給:帰宅ボタンで働いた時間が出た日だけで、差し引き合計 ÷ 働いた時間の合計
+    // 平均時給:働いた時間が出た日だけで、差し引き合計 ÷ 働いた時間の合計
     const wk=days.map(d=>({w:workOf(d), m:dayMoney(d,logs)})).filter(x=>x.w.min)
       .reduce((a,x)=>({min:a.min+x.w.min, net:a.net+x.m.net, n:a.n+1}),{min:0,net:0,n:0});
-    $("stWork").textContent = wk.n
-      ? `働いた時間 ${fmtDur(wk.min)} / 平均時給 ${yen(hourlyOf(wk.net,wk.min))}(帰宅を押した${wk.n}日)`
-      : "平均時給:帰宅ボタンを押した日がまだないで";
+    $("stWorkH").textContent = wk.n ? fmtDur(wk.min) : "—";
+    $("stHourly").textContent = wk.n ? yen(hourlyOf(wk.net,wk.min)) : "—";
+    $("stHourlyL").textContent = wk.n ? `平均時給(${wk.n}日分)` : "平均時給";
     if(!days.length){ $("logList").innerHTML='<div class="empty">この月の記録はまだないで</div>'; return; }
     $("logList").innerHTML=[...days].reverse().map(day=>{
       const d=parseYmd(day), w=d.getDay(), m=dayMoney(day,logs), wk=workOf(day);
@@ -1029,10 +1050,10 @@
           <div>走行距離 ${m.km.toFixed(1)}km / ガソリン代 ${yen(m.gas)} <span class="muted">(${m.gasPrice}円/L・${m.eff}km/L)</span></div>
           <div class="net">差し引き日当 ${yen(m.net)}</div>
           <div class="work">
-            <div><div class="muted">出発 ${wk.start!=null?hm(new Date(wk.start)):"—"} → 帰宅 ${wk.home!=null?hm(new Date(wk.home)):"—"}</div>
+            <div><div class="muted">出発 ${wk.start!=null?hm(new Date(wk.start))+(wk.src==="nav"?"(ナビ)":""):"—"} → 帰宅 ${wk.home!=null?hm(new Date(wk.home)):"—"}</div>
               ${wk.min?`<div class="muted">働いた時間 ${fmtDur(wk.min)}</div>`:""}
               <div class="hourly">時給 ${wk.min?yen(hourlyOf(m.net,wk.min)):"—"}</div></div>
-            <button class="btn small" data-home="${day}" ${locked?"disabled":""}>帰宅時刻を直す</button>
+            <button class="btn small" data-home="${day}" ${locked?"disabled":""}>時刻を直す</button>
           </div>
         </div>`;
       return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}<button class="copybtn" data-copy="${day}">📋 報告をコピー</button></div>`;
@@ -1125,36 +1146,41 @@
     $("lForm").style.display="none"; renderLog(); toast("削除したで");
   };
 
-  // 帰宅時刻を手で直す(押し忘れ用)。0時〜6時の時刻は、その日付の次の日の時刻として保存する
+  // 出発・帰宅の時刻を手で直す(押し忘れ用)。0時〜6時の時刻は、その日付の次の日の時刻として保存する。
+  // 欄を空(消す)にして保存すると、その時刻を消す(出発は、ナビ開始の時刻に戻る)
   function openHomeForm(day){
     if(data.locked){ toast("ロック中やで"); return; }
     const dd=data.days[day]||{}, d=parseYmd(day);
     $("hmDay").value=day;
-    $("hmTitle").textContent=`${d.getMonth()+1}月${d.getDate()}日の帰宅時刻を直す`;
+    $("hmTitle").textContent=`${d.getMonth()+1}月${d.getDate()}日の時刻を直す`;
+    $("hmStart").value = dd.startAt ? hm(new Date(dd.startAt)) : "";
     $("hmTime").value = dd.homeAt ? hm(new Date(dd.homeAt)) : "";
-    $("hmDel").style.display = dd.homeAt ? "block" : "none";
+    const navs=data.logs.filter(l=>l.date===day && !l.manual && l.at).map(l=>new Date(l.at).getTime()).filter(t=>isFinite(t));
+    $("hmStartHint").textContent = navs.length
+      ? `空のままなら、この日最初にナビ開始を押した ${hm(new Date(Math.min(...navs)))} を出発にする。`
+      : "この日はナビ開始の記録がないので、出発を入れんと時給は出えへん。";
     $("lForm").style.display="none";
     $("hmForm").style.display="block";
     $("hmForm").scrollIntoView({behavior:"smooth",block:"start"});
   }
+  function timeOn(day, t){
+    const mt=/^(\d{1,2}):(\d{2})/.exec(t||""); if(!mt) return null;
+    const h=+mt[1], mi=+mt[2], d=parseYmd(day);
+    if(h<DAY_CUTOFF) d.setDate(d.getDate()+1);
+    d.setHours(h,mi,0,0); return d.toISOString();
+  }
+  $("hmStartClr").onclick=()=>{ $("hmStart").value=""; };
+  $("hmTimeClr").onclick=()=>{ $("hmTime").value=""; };
   $("hmCancel").onclick=()=>{ $("hmForm").style.display="none"; };
   $("hmSave").onclick=()=>{
     if(data.locked){ toast("ロック中やで"); return; }
-    const day=$("hmDay").value, t=$("hmTime").value;
-    const mt=/^(\d{1,2}):(\d{2})/.exec(t||"");
-    if(!day || !mt){ toast("帰宅時刻を入れてな"); return; }
-    const h=+mt[1], mi=+mt[2], d=parseYmd(day);
-    if(h<DAY_CUTOFF) d.setDate(d.getDate()+1);
-    d.setHours(h,mi,0,0);
-    ensureDay(day).homeAt=d.toISOString(); save();
-    $("hmForm").style.display="none"; renderLog(); renderHomeState(); toast("帰宅時刻を保存したで");
-  };
-  $("hmDel").onclick=()=>{
-    if(data.locked){ toast("ロック中やで"); return; }
-    const day=$("hmDay").value; if(!day || !data.days[day]) return;
-    if(!confirm("この日の帰宅時刻を消す?")) return;
-    delete data.days[day].homeAt; save();
-    $("hmForm").style.display="none"; renderLog(); renderHomeState(); toast("帰宅時刻を消したで");
+    const day=$("hmDay").value; if(!day) return;
+    const dd=ensureDay(day);
+    const st=timeOn(day,$("hmStart").value), ht=timeOn(day,$("hmTime").value);
+    if(st) dd.startAt=st; else delete dd.startAt;
+    if(ht) dd.homeAt=ht; else delete dd.homeAt;
+    save();
+    $("hmForm").style.display="none"; renderLog(); renderHomeState(); toast("時刻を保存したで");
   };
 
   // ---------- CSV ----------
@@ -1182,7 +1208,7 @@
       if(w.min){ tot.wmin+=w.min; tot.wnet+=m.net; }
     });
     rows.push(["合計","","","",tot.km.toFixed(1),tot.wage,"","",tot.gas,tot.net,"","",tot.wmin?hmm(tot.wmin):"",tot.wmin?hourlyOf(tot.wnet,tot.wmin):""]);
-    if(tot.wmin) rows.push(["(合計の時給は、帰宅時刻がある日だけの 差し引き日当 ÷ 働いた時間)"]);
+    if(tot.wmin) rows.push(["(合計の時給は、働いた時間が出た日だけの 差し引き日当 ÷ 働いた時間)"]);
     rows.push([]);
     rows.push(["■送迎の明細"],["日付","曜日","区分","人数","名前","走行距離(km)","記録時刻"]);
     logs.forEach(l=>{
