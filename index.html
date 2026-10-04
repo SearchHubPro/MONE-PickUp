@@ -126,6 +126,8 @@
   .pay .wage button.on{background:var(--ok);border-color:var(--ok);color:#06210f}
   .pay .wage button:disabled{opacity:.6}
   .pay .net{font-weight:800;font-size:16px}
+  .copybtn{display:block;width:100%;margin-top:8px;border:1px solid var(--line);background:var(--card);color:var(--text);
+    border-radius:9px;padding:9px;font-size:14px;font-weight:700;font-family:inherit}
   .lockbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
   .locked .trip{cursor:default}
   .stats.money .n{font-size:18px}
@@ -152,6 +154,10 @@
     <div class="seg sm" id="startSeg">
       <button id="stCur" class="on-go">出発:現在地</button>
       <button id="stHome">出発:自宅</button>
+    </div>
+    <div class="seg sm" id="endSeg" style="display:none">
+      <button id="enStore" class="on-back">帰り先:お店</button>
+      <button id="enHome">帰り先:自宅</button>
     </div>
 
     <div class="card">
@@ -363,6 +369,7 @@
   if(!data.days || typeof data.days!=="object") data.days={};
   if(!data.home) data.home={address:"",lat:null,lng:null};
   let mode = "go";
+  let backTo = "store";      // 帰りの行き先:store=お店に戻る / home=自宅(アプリを開くたびにお店に戻る)
   let startFrom = "current"; // 行きの出発地:current=現在地 / home=自宅(アプリを開くたびに現在地に戻る)     // go=行き / back=帰り
   let selected = [];
   let lastRoute = null;
@@ -574,6 +581,12 @@
     if(v==="home" && !hasLL(data.home)){ toast("先に「設定」で自宅の位置を登録してな"); return; }
     startFrom=v; lastRoute=null; $("resultCard").style.display="none"; renderPick();
   }
+  function setBackTo(v){
+    if(v==="home" && !hasLL(data.home)){ toast("先に「設定」で自宅の位置を登録してな"); return; }
+    backTo=v; lastRoute=null; $("resultCard").style.display="none"; renderPick();
+  }
+  $("enStore").onclick = () => setBackTo("store");
+  $("enHome").onclick = () => setBackTo("home");
   $("stCur").onclick = () => setStart("current");
   $("stHome").onclick = () => setStart("home");
   $("modeGo").onclick = () => setMode("go");
@@ -599,12 +612,17 @@
       $("pickTitle").textContent="今日迎えに行く子をタップ";
       $("btnSameAsGo").style.display="none";
       $("startSeg").style.display="flex";
+      $("endSeg").style.display="none";
       $("stCur").className = startFrom==="current" ? "on-go" : "";
       $("stHome").className = startFrom==="home" ? "on-go" : "";
     }else{
-      $("topLeft").innerHTML='<div class="muted">帰り</div><b style="font-size:20px">お店 → 家'+(hasLL(data.home)?' → 自宅':'')+'</b>';
+      if(backTo==="home" && !hasLL(data.home)) backTo="store";
+      $("topLeft").innerHTML='<div class="muted">帰り</div><b style="font-size:20px">お店 → 家 → '+(backTo==="home"?'自宅':'お店')+'</b>';
       $("pickTitle").textContent="送って帰る子をタップ";
       $("startSeg").style.display="none";
+      $("endSeg").style.display="flex";
+      $("enStore").className = backTo==="store" ? "on-back" : "";
+      $("enHome").className = backTo==="home" ? "on-back" : "";
       const hasGo=data.logs.some(l=>l.date===bizDate() && l.dir==="go");
       $("btnSameAsGo").style.display = hasGo ? "block" : "none";
     }
@@ -702,15 +720,15 @@
     const need = r.sec + r.order.length*boardSec() + (+data.buffer||0)*60;
     return new Date(targetArrival().getTime() - need*1000);
   }
-  // 帰り:最後の子を降ろしたあと自宅まで行くか
-  const homeOn = () => hasLL(data.home);
+  // 帰り:最後の子を降ろしたあとの行き先(お店に戻る/自宅)
+  const backEnd = () => backTo==="home" && hasLL(data.home) ? {kind:"home", pt:data.home} : {kind:"store", pt:data.store};
 
   // 指定した順番で時間を計算(キーがあればGoogle、失敗・なしなら直線距離)
   // 行き:origin=出発地(現在地か自宅) / 帰り:お店 → 子 → (自宅)
   async function evalOrder(order, dir, origin){
     const store=data.store, key=getKey();
     let note="";
-    const toHome = dir==="back" && homeOn();
+    const end = dir==="back" ? backEnd() : null;
     if(key){
       try{
         if(dir==="go"){
@@ -728,15 +746,13 @@
           }
           return r;
         }else{
-          const r = toHome
-            ? await computeRoute(key, store, data.home, order)
-            : await computeRoute(key, store, order[order.length-1], order.slice(0,-1));
-          return Object.assign(r,{order:[...order], toHome});
+          const r = await computeRoute(key, store, end.pt, order);
+          return Object.assign(r,{order:[...order], toEnd:true, endKind:end.kind});
         }
       }catch(e){ note="Google計算に失敗:"+e.message+" → 直線距離で仮計算した"; }
     }
-    const r = dir==="go" ? straightFixed(origin, order, store) : straightFixed(store, order, toHome?data.home:null);
-    r.toHome=toHome;
+    const r = dir==="go" ? straightFixed(origin, order, store) : straightFixed(store, order, end.pt);
+    if(end){ r.toEnd=true; r.endKind=end.kind; }
     if(dir==="go" && !origin && !note) note="現在地が取れへんかったから、1人目からお店までで計算した";
     r.note=note;
     return r;
@@ -778,8 +794,9 @@
     renderResult(true);
   }
 
-  // 帰りで自宅まで行く場合、最後の子を降ろすまでの時間
-  const dropSec = r => r.toHome && r.legs.length ? r.sec - r.legs[r.legs.length-1].sec : r.sec;
+  // 帰り:最後の子を降ろすまでの時間(最後の区間=お店か自宅へ戻る分を除く)
+  const dropSec = r => r.toEnd && r.legs.length ? r.sec - r.legs[r.legs.length-1].sec : r.sec;
+  const endLabel = r => r.endKind==="home" ? "自宅" : (data.store.name||"お店");
   // 記録用の走行距離(直線の仮計算は1.4倍して道のりの目安にする)
   const roadKm = r => r.mode==="api" ? r.km : r.km*1.4;
 
@@ -789,7 +806,7 @@
     const rough = r.mode==="line" ? '<div class="muted">※直線距離からの大ざっぱな目安。APIキーを入れると正確になる</div>' : "";
     if(r.dir==="back"){
       const end=new Date(now.getTime()+(dropSec(r)+n*boardSec())*1000);
-      const home=r.toHome ? `<div class="muted">自宅には ${hm(new Date(now.getTime()+(r.sec+n*boardSec())*1000))} ごろ着</div>` : "";
+      const home=r.toEnd ? `<div class="muted">${esc(endLabel(r))}には ${hm(new Date(now.getTime()+(r.sec+n*boardSec())*1000))} ごろ着</div>` : "";
       $("deadlineBox").innerHTML=`<div class="muted">今お店を出たら</div>
         <div class="big-time" style="color:var(--back)">${hm(end)} ごろ全員送り終わり</div>${home}${rough}`;
       return;
@@ -839,10 +856,10 @@
         <div class="leg">${leg?"↑ "+legTxt(leg):""}</div><div class="muted">${esc(g.address)}</div></div>
         ${n>1?`<div class="mv"><button data-mv="${i}" data-d="-1" ${i===0?"disabled":""}>▲</button><button data-mv="${i}" data-d="1" ${i===n-1?"disabled":""}>▼</button></div>`:""}</li>`;
     });
-    if(r.dir==="go" || r.toHome){
+    if(r.dir==="go" || r.toEnd){
       const last=r.legs[li]; if(last) t+=last.sec*1000;
-      const nm = r.dir==="go" ? storeName : "自宅";
-      html+=`<li><div class="i">${r.dir==="go"?"🏁":"🏠"}</div><div style="flex:1"><span class="eta">${hm(new Date(t))}ごろ</span><b>${nm}</b><div class="leg">${last?"↑ "+legTxt(last):""}</div></div></li>`;
+      const nm = r.dir==="go" ? storeName : esc(endLabel(r));
+      html+=`<li><div class="i">${r.dir==="back"&&r.endKind==="home"?"🏠":"🏁"}</div><div style="flex:1"><span class="eta">${hm(new Date(t))}ごろ</span><b>${nm}</b><div class="leg">${last?"↑ "+legTxt(last):""}</div></div></li>`;
     }
     $("routeList").innerHTML=html;
     $("routeList").querySelectorAll("[data-mv]").forEach(b=>b.onclick=()=>moveStop(+b.dataset.mv, +b.dataset.d));
@@ -873,7 +890,7 @@
       : `${d.getMonth()+1}/${d.getDate()} ${r.dir==="go"?"行き":"帰り"} ${names.length}人を記録したで`);
     let dest, mids, origin=null;
     if(r.dir==="go"){ dest=data.store; mids=r.order; if(r.fromHome) origin=data.home; }
-    else if(r.toHome){ dest=data.home; mids=r.order; }
+    else if(r.toEnd){ dest = r.endKind==="home" ? data.home : data.store; mids=r.order; }
     else { dest=r.order[r.order.length-1]; mids=r.order.slice(0,-1); }
     let url="https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate"+
       "&destination="+encodeURIComponent(q(dest));
@@ -944,13 +961,39 @@
           <div>走行距離 ${m.km.toFixed(1)}km / ガソリン代 ${yen(m.gas)} <span class="muted">(${m.gasPrice}円/L・${m.eff}km/L)</span></div>
           <div class="net">差し引き日当 ${yen(m.net)}</div>
         </div>`;
-      return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}</div>`;
+      return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}<button class="copybtn" data-copy="${day}">📋 報告をコピー</button></div>`;
     }).join("");
     if(!locked) $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>openLogForm(el.dataset.log));
+    $("logList").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyReport(b.dataset.copy));
     $("logList").querySelectorAll("[data-wage]").forEach(b=>b.onclick=()=>{
       if(data.locked) return;
       ensureDay(b.dataset.day).wage=+b.dataset.wage; save(); renderLog();
     });
+  }
+
+  // 報告用の文(例「26行き」の下に名前を回った順に、行き→帰り)
+  function reportText(day){
+    const n=parseYmd(day).getDate();
+    const part=dir=>{
+      const ls=data.logs.filter(l=>l.date===day&&l.dir===dir).sort((a,b)=>(a.at||"").localeCompare(b.at||""));
+      const names=ls.flatMap(l=>l.names);
+      return names.length ? `${n}${dir==="go"?"行き":"帰り"}\n`+names.join("\n") : "";
+    };
+    return [part("go"),part("back")].filter(Boolean).join("\n\n");
+  }
+  async function copyReport(day){
+    const text=reportText(day);
+    const d=parseYmd(day);
+    let done=false;
+    try{ if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(text); done=true; } }catch(e){}
+    if(!done){
+      const ta=document.createElement("textarea");
+      ta.value=text; ta.setAttribute("readonly",""); ta.style.position="fixed"; ta.style.top="-1000px";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0,text.length);
+      try{ done=document.execCommand("copy"); }catch(e){}
+      ta.remove();
+    }
+    toast(done ? `${d.getMonth()+1}/${d.getDate()}の報告をコピーしたで` : "コピーできへんかった");
   }
 
   let formDir="go";
