@@ -182,6 +182,7 @@
       <ol class="route" id="routeList"></ol>
       <div class="muted" id="totalLine" style="margin-top:8px"></div>
       <button class="btn primary big" id="btnNav">ナビ開始(記録もする)</button>
+      <button class="btn" id="btnView">🗺 ルートを見る(記録しない)</button>
       <button class="btn" id="btnClear">選び直す</button>
     </div>
 
@@ -926,6 +927,18 @@
 
   // ---------- Googleマップでナビ ----------
   const q = p => hasLL(p) ? p.lat+","+p.lng : p.address;
+  // Googleマップを開くURL。navigate=true ならナビを始める、false ならルートの全体図を見るだけ
+  function mapsUrl(r, navigate){
+    let dest, mids, origin=null;
+    if(r.dir==="go"){ dest=data.store; mids=r.order; if(r.fromHome) origin=data.home; else if(r.startKind==="store") origin=data.store; }
+    else if(r.toEnd){ dest = r.endKind==="home" ? data.home : data.store; mids=r.order; }
+    else { dest=r.order[r.order.length-1]; mids=r.order.slice(0,-1); }
+    let url="https://www.google.com/maps/dir/?api=1&travelmode=driving"+(navigate?"&dir_action=navigate":"")+
+      "&destination="+encodeURIComponent(q(dest));
+    if(origin) url+="&origin="+encodeURIComponent(q(origin)); // 自宅・お店から(省略すると現在地から)
+    if(mids.length) url+="&waypoints="+encodeURIComponent(mids.map(q).join("|"));
+    return url;
+  }
   $("btnNav").onclick = () => {
     const r=lastRoute; if(!r) return;
     const names=r.order.map(g=>g.name);
@@ -933,15 +946,13 @@
     const d=parseYmd(bizDate());
     toast(res==="dup" ? "もう記録済みやからそのままナビ開くで(距離は最新にした)"
       : `${d.getMonth()+1}/${d.getDate()} ${r.dir==="go"?"行き":"帰り"} ${names.length}人を記録したで`);
-    let dest, mids, origin=null;
-    if(r.dir==="go"){ dest=data.store; mids=r.order; if(r.fromHome) origin=data.home; else if(r.startKind==="store") origin=data.store; }
-    else if(r.toEnd){ dest = r.endKind==="home" ? data.home : data.store; mids=r.order; }
-    else { dest=r.order[r.order.length-1]; mids=r.order.slice(0,-1); }
-    let url="https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate"+
-      "&destination="+encodeURIComponent(q(dest));
-    if(origin) url+="&origin="+encodeURIComponent(q(origin)); // 自宅・お店から(省略すると現在地から)
-    if(mids.length) url+="&waypoints="+encodeURIComponent(mids.map(q).join("|"));
+    const url=mapsUrl(r, true);
     setTimeout(()=>{ location.href=url; }, 700);
+  };
+  // ルートを見るだけ:記録・走行距離・時給の出発時刻には何も残さない
+  $("btnView").onclick = () => {
+    const r=lastRoute; if(!r) return;
+    location.href=mapsUrl(r, false);
   };
   // ---------- 出発した/帰宅した ----------
   // 押した時刻をその日(朝6時までは前の日)の出発時刻(days[日付].startAt)/帰宅時刻(homeAt)として保存。
