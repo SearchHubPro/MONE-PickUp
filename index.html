@@ -162,6 +162,7 @@
     <div class="seg sm" id="startSeg">
       <button id="stCur" class="on-go">出発:現在地</button>
       <button id="stHome">出発:自宅</button>
+      <button id="stStore">出発:お店</button>
     </div>
     <div class="seg sm" id="endSeg" style="display:none">
       <button id="enStore" class="on-back">帰り先:お店</button>
@@ -406,7 +407,7 @@
   if(!data.home) data.home={address:"",lat:null,lng:null};
   let mode = "go";
   let backTo = "store";      // 帰りの行き先:store=お店に戻る / home=自宅(アプリを開くたびにお店に戻る)
-  let startFrom = "current"; // 行きの出発地:current=現在地 / home=自宅(アプリを開くたびに現在地に戻る)     // go=行き / back=帰り
+  let startFrom = "current"; // 行きの出発地:current=現在地 / home=自宅 / store=お店(アプリを開くたびに現在地に戻る)     // go=行き / back=帰り
   let selected = [];
   let lastRoute = null;
 
@@ -614,6 +615,7 @@
   }
   function setStart(v){
     if(v==="home" && !hasLL(data.home)){ toast("先に「設定」で自宅の位置を登録してな"); return; }
+    if(v==="store" && !hasLL(data.store)){ toast("先に「設定」でお店の位置を登録してな"); return; }
     startFrom=v; lastRoute=null; $("resultCard").style.display="none"; renderPick();
   }
   function setBackTo(v){
@@ -624,6 +626,7 @@
   $("enHome").onclick = () => setBackTo("home");
   $("stCur").onclick = () => setStart("current");
   $("stHome").onclick = () => setStart("home");
+  $("stStore").onclick = () => setStart("store");
   $("modeGo").onclick = () => setMode("go");
   $("modeBack").onclick = () => setMode("back");
   $("btnSameAsGo").onclick = () => {
@@ -650,6 +653,7 @@
       $("endSeg").style.display="none";
       $("stCur").className = startFrom==="current" ? "on-go" : "";
       $("stHome").className = startFrom==="home" ? "on-go" : "";
+      $("stStore").className = startFrom==="store" ? "on-go" : "";
     }else{
       if(backTo==="home" && !hasLL(data.home)) backTo="store";
       $("topLeft").innerHTML='<div class="muted">帰り</div><b style="font-size:20px">お店 → 家 → '+(backTo==="home"?'自宅':'お店')+'</b>';
@@ -759,7 +763,7 @@
   const backEnd = () => backTo==="home" && hasLL(data.home) ? {kind:"home", pt:data.home} : {kind:"store", pt:data.store};
 
   // 指定した順番で時間を計算(キーがあればGoogle、失敗・なしなら直線距離)
-  // 行き:origin=出発地(現在地か自宅) / 帰り:お店 → 子 → (自宅)
+  // 行き:origin=出発地(現在地・自宅・お店) / 帰り:お店 → 子 → (自宅)
   async function evalOrder(order, dir, origin){
     const store=data.store, key=getKey();
     let note="";
@@ -801,15 +805,16 @@
     const missing=girls.filter(p=>!hasLL(p));
     if(missing.length){ toast("位置が未登録:"+missing.map(p=>p.name).join("・")+"(女の子タブで調べてな)"); return; }
     const btn=$("btnCalc"); btn.disabled=true;
-    let origin=null, fromHome=false;
+    let origin=null, fromHome=false, startKind="current";
     if(mode==="go"){
-      if(startFrom==="home" && hasLL(data.home)){ origin={...data.home}; fromHome=true; }
+      if(startFrom==="home" && hasLL(data.home)){ origin={...data.home}; fromHome=true; startKind="home"; }
+      else if(startFrom==="store"){ origin={...store}; startKind="store"; } // お店 → 子 → お店
       else { btn.textContent="現在地を取得中…"; origin=await currentPos(); }
     }
     btn.textContent=getKey()?"道路で計算中…":"計算中…";
     const order=orderByRule(girls, mode, store);
     const route=await evalOrder(order, mode, origin);
-    route.dir=mode; route.origin=origin; route.fromHome=fromHome; route.manual=false;
+    route.dir=mode; route.origin=origin; route.fromHome=fromHome; route.startKind=startKind; route.manual=false;
     lastRoute=route;
     btn.disabled=false; btn.textContent="最短ルートを出す";
     renderResult();
@@ -824,7 +829,7 @@
     const order=[...r.order]; [order[i],order[j]]=[order[j],order[i]];
     $("routeList").querySelectorAll("[data-mv]").forEach(b=>b.disabled=true);
     const nr=await evalOrder(order, r.dir, r.origin);
-    nr.dir=r.dir; nr.origin=r.origin; nr.fromHome=r.fromHome; nr.manual=true;
+    nr.dir=r.dir; nr.origin=r.origin; nr.fromHome=r.fromHome; nr.startKind=r.startKind; nr.manual=true;
     lastRoute=nr; moving=false;
     renderResult(true);
   }
@@ -879,7 +884,12 @@
     let html="", li=0, t=base;
     const stepEta = leg => { if(leg){ t+=leg.sec*1000; } const s=hm(new Date(t)); t+=boardSec()*1000; return s; };
     if(r.dir==="go"){
-      if(r.hasStart) html+=`<li><div class="i">${r.fromHome?"🏠":"●"}</div><div><b>${r.fromHome?"自宅":"現在地"}</b> <span class="muted">(${hm(new Date(base))}出発)</span></div></li>`;
+      if(r.hasStart){
+        const sk=r.startKind||(r.fromHome?"home":"current");
+        const ic= sk==="home"?"🏠" : sk==="store"?"🏁" : "●";
+        const nm= sk==="home"?"自宅" : sk==="store"?storeName : "現在地";
+        html+=`<li><div class="i">${ic}</div><div><b>${nm}</b> <span class="muted">(${hm(new Date(base))}出発)</span></div></li>`;
+      }
     }else{
       html+=`<li><div class="i">🏁</div><div><b>${storeName}</b> <span class="muted">(出発)</span></div></li>`;
     }
@@ -924,12 +934,12 @@
     toast(res==="dup" ? "もう記録済みやからそのままナビ開くで(距離は最新にした)"
       : `${d.getMonth()+1}/${d.getDate()} ${r.dir==="go"?"行き":"帰り"} ${names.length}人を記録したで`);
     let dest, mids, origin=null;
-    if(r.dir==="go"){ dest=data.store; mids=r.order; if(r.fromHome) origin=data.home; }
+    if(r.dir==="go"){ dest=data.store; mids=r.order; if(r.fromHome) origin=data.home; else if(r.startKind==="store") origin=data.store; }
     else if(r.toEnd){ dest = r.endKind==="home" ? data.home : data.store; mids=r.order; }
     else { dest=r.order[r.order.length-1]; mids=r.order.slice(0,-1); }
     let url="https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate"+
       "&destination="+encodeURIComponent(q(dest));
-    if(origin) url+="&origin="+encodeURIComponent(q(origin)); // 自宅から(省略すると現在地から)
+    if(origin) url+="&origin="+encodeURIComponent(q(origin)); // 自宅・お店から(省略すると現在地から)
     if(mids.length) url+="&waypoints="+encodeURIComponent(mids.map(q).join("|"));
     setTimeout(()=>{ location.href=url; }, 700);
   };
@@ -1253,6 +1263,7 @@
     data.home={address:$("hAddr").value.trim(), lat:hll?hll.lat:null, lng:hll?hll.lng:null};
     data.gasPrice=gas; data.fuelEff=eff;
     if(!hasLL(data.home) && startFrom==="home") startFrom="current";
+    if(!(ll) && startFrom==="store") startFrom="current";
     data.store={name:$("sName").value.trim(), address:$("sAddr").value.trim(),
                 lat:ll?ll.lat:null, lng:ll?ll.lng:null};
     data.arrive=$("sArrive").value||"20:50";
