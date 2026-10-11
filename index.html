@@ -150,6 +150,20 @@
   .cal .cd.today{border-color:var(--ng)}
   .cal .cd.sel{background:#132638;border-color:var(--accent)}
   .cal .cd.today.sel{border-color:var(--ng)}
+  /* シフト(今日以降):行き・帰り=全体、行きだけ=左半分、帰りだけ=右半分を薄い黄色 */
+  .cal .cd.sh-both{background:#fbefa0}
+  .cal .cd.sh-go{background:linear-gradient(90deg,#fbefa0 50%,var(--card2) 50%)}
+  .cal .cd.sh-back{background:linear-gradient(90deg,var(--card2) 50%,#fbefa0 50%)}
+  /* シフトのマスは日付の数字を小さい黒い札にのせて、黄色の上でも読めるようにする */
+  .cal .cd.sh-both .num,.cal .cd.sh-go .num,.cal .cd.sh-back .num{background:rgba(17,20,24,.85);border-radius:8px;padding:0 6px;line-height:1.35}
+  .cal-legend .sh{display:inline-block;width:16px;height:16px;border-radius:4px;border:1px solid var(--line);vertical-align:-3px;margin-right:4px}
+  .cal-legend .sh.both{background:#fbefa0}
+  .cal-legend .sh.go{background:linear-gradient(90deg,#fbefa0 50%,transparent 50%)}
+  .cal-legend .sh.back{background:linear-gradient(90deg,transparent 50%,#fbefa0 50%)}
+  .cal-legend{flex-wrap:wrap;row-gap:6px}
+  .shiftbox{background:var(--card2);border-radius:10px;padding:10px;margin-bottom:10px}
+  .shiftbox .seg{margin:6px 0 0;background:var(--card)}
+  .shiftbox .seg button{font-size:13px;padding:9px 0}
   .cal .dot{width:20px;height:20px;border-radius:50%;background:var(--accent);border:2px solid var(--accent)}
   .cal .dot.half{background:linear-gradient(90deg,var(--accent) 50%,transparent 50%)}
   .cal-legend{display:flex;gap:16px;align-items:center;margin-top:10px;font-size:13px;color:var(--sub)}
@@ -241,7 +255,7 @@
     <div class="card" id="calCard">
       <h2 id="calTitle"></h2>
       <div class="cal" id="cal"></div>
-      <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span class="muted">日をタップでその日だけ</span></div>
+      <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
     </div>
     <div class="row" style="margin-bottom:14px">
       <button class="btn" id="lAdd" style="margin:0">＋ 手で追加</button>
@@ -411,7 +425,7 @@
   const defaults = () => ({girls:[], store:{name:"",address:"",lat:null,lng:null},
                            arrive:"20:50", buffer:5, board:2, logs:[],
                            home:{address:"",lat:null,lng:null}, gasPrice:170, fuelEff:10,
-                           days:{}, locked:false});
+                           days:{}, locked:false, shifts:{}});
   function load(){
     try{ const s = localStorage.getItem(KEY_DATA); if(s) return Object.assign(defaults(), JSON.parse(s)); }catch(e){}
     return defaults();
@@ -427,6 +441,7 @@
   if(!Array.isArray(data.logs)) data.logs=[];
   if(!data.days || typeof data.days!=="object") data.days={};
   if(!data.home) data.home={address:"",lat:null,lng:null};
+  if(!data.shifts || typeof data.shifts!=="object") data.shifts={}; // シフト {"YYYY-MM-DD":"both"|"go"|"back"}
   let mode = "go";
   let backTo = "store";      // 帰りの行き先:store=お店に戻る / home=自宅(アプリを開くたびにお店に戻る)
   let startFrom = "current"; // 行きの出発地:current=現在地 / home=自宅 / store=お店(アプリを開くたびに現在地に戻る)     // go=行き / back=帰り
@@ -1012,17 +1027,36 @@
   $("mNext").onclick = () => { viewMonth.m++; if(viewMonth.m>11){viewMonth.m=0;viewMonth.y++;} selDay=null; renderLog(); };
 
   // その月のカレンダー:送迎した日に丸(日当8,000円=●、4,000円=◐)、今日(朝6時までは前の日)は赤枠、選んだ日は青
+  const SHIFT_LABEL={both:"行き・帰り", go:"行きだけ", back:"帰りだけ"};
+  // 選んだ日(今日以降)のシフトを選ぶボタン。ロック中でも入れられる(シフトは記録とは別の予定)
+  function shiftBoxHtml(day){
+    const d=parseYmd(day), cur=data.shifts[day]||"none";
+    const opts=[["both","行き・帰り"],["go","行きだけ"],["back","帰りだけ"],["none","シフトなし"]];
+    return `<div class="shiftbox"><div class="muted">${d.getMonth()+1}月${d.getDate()}日のシフト</div>
+      <div class="seg sm">${opts.map(([v,t])=>`<button data-shift="${v}" class="${cur===v?"on-go":""}">${t}</button>`).join("")}</div></div>`;
+  }
+  function bindShift(){
+    $("logList").querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
+      const day=selDay; if(!day) return;
+      const v=b.dataset.shift, d=parseYmd(day);
+      if(v==="none") delete data.shifts[day]; else data.shifts[day]=v;
+      save(); renderLog();
+      toast(`${d.getMonth()+1}/${d.getDate()} ${v==="none"?"シフトなしにした":SHIFT_LABEL[v]+"にした"}で`);
+    });
+  }
   function renderCal(days, logs){
     const y=viewMonth.y, m=viewMonth.m;
     const first=new Date(y,m,1).getDay(), n=new Date(y,m+1,0).getDate();
     const has=new Set(days), today=bizDate();
-    $("calTitle").textContent=`${m+1}月(${days.length}日送迎)`;
+    const shiftN=Object.keys(data.shifts).filter(k=>k.startsWith(monthKey()+"-") && k>=today && SHIFT_LABEL[data.shifts[k]]).length;
+    $("calTitle").textContent=`${m+1}月(${days.length}日送迎・シフト${shiftN}日)`;
     let h=WD.map((w,i)=>`<div class="cw ${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("");
     for(let i=0;i<first;i++) h+='<div class="cd blank"></div>';
     for(let d=1; d<=n; d++){
       const key=`${y}-${pad(m+1)}-${pad(d)}`, w=(first+d-1)%7;
       const mark = has.has(key) ? `<span class="dot ${dayMoney(key,logs).wage>=8000?"":"half"}"></span>` : "";
-      h+=`<button class="cd ${w===0?"sun":w===6?"sat":""} ${key===today?"today":""} ${key===selDay?"sel":""}" data-cal="${key}"><span class="num">${d}</span>${mark}</button>`;
+      const sh = key>=today && SHIFT_LABEL[data.shifts[key]] ? "sh-"+data.shifts[key] : ""; // シフトの色は今日以降だけ
+      h+=`<button class="cd ${w===0?"sun":w===6?"sat":""} ${key===today?"today":""} ${key===selDay?"sel":""} ${sh}" data-cal="${key}"><span class="num">${d}</span>${mark}</button>`;
     }
     $("cal").innerHTML=h;
     $("cal").querySelectorAll("[data-cal]").forEach(b=>b.onclick=()=>{ selDay = selDay===b.dataset.cal ? null : b.dataset.cal; renderLog(); });
@@ -1102,14 +1136,17 @@
       $("logTitle").textContent=`${sd.getMonth()+1}月${sd.getDate()}日の記録`;
     }
     const allBtn='<button class="btn" id="calAll" style="margin:0 0 10px">全部の日を見る</button>';
+    const future = selDay && selDay>=bizDate();
+    const shiftBox = future ? shiftBoxHtml(selDay) : "";
     if(selDay && !days.includes(selDay)){
-      $("logList").innerHTML=allBtn+'<div class="empty">この日の記録はないで</div>';
+      $("logList").innerHTML=allBtn+shiftBox+(future?"":'<div class="empty">この日の記録はないで</div>');
       $("calAll").onclick=()=>{ selDay=null; renderLog(); };
+      bindShift();
       return;
     }
     if(!days.length){ $("logList").innerHTML='<div class="empty">この月の記録はまだないで</div>'; return; }
     const shown = selDay ? [selDay] : [...days].reverse();
-    $("logList").innerHTML=(selDay?allBtn:"")+shown.map(day=>{
+    $("logList").innerHTML=(selDay?allBtn+shiftBox:"")+shown.map(day=>{
       const d=parseYmd(day), w=d.getDay(), m=dayMoney(day,logs), wk=workOf(day);
       const trips=logs.filter(l=>l.date===day).map(l=>`
         <div class="trip" data-log="${l.id}">
@@ -1131,7 +1168,7 @@
         </div>`;
       return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}<button class="copybtn" data-copy="${day}">📋 報告をコピー</button></div>`;
     }).join("");
-    if(selDay) $("calAll").onclick=()=>{ selDay=null; renderLog(); };
+    if(selDay){ $("calAll").onclick=()=>{ selDay=null; renderLog(); }; bindShift(); }
     if(!locked) $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>openLogForm(el.dataset.log));
     $("logList").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyReport(b.dataset.copy));
     $("logList").querySelectorAll("[data-home]").forEach(b=>b.onclick=()=>openHomeForm(b.dataset.home));
@@ -1353,6 +1390,7 @@
       data=Object.assign(defaults(), d); if(!Array.isArray(data.logs)) data.logs=[];
       if(!data.days || typeof data.days!=="object") data.days={};
       if(!data.home) data.home={address:"",lat:null,lng:null};
+      if(!data.shifts || typeof data.shifts!=="object") data.shifts={};
       selected=[]; lastRoute=null;
       save(); renderAll(); fillSettings(); toast("読み込んだで");
     }catch(err){ toast("読み込めへんかった:"+err.message); }
