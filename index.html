@@ -165,6 +165,14 @@
 <main>
   <!-- 今日の送迎 -->
   <section class="view on" id="v-today">
+    <!-- 家を出るとき・家に着いたときに押す(画面の一番上) -->
+    <div class="card" id="homeCard">
+      <div class="row">
+        <button class="btn big" id="btnStart" style="margin-top:0">🚗 出発した</button>
+        <button class="btn big" id="btnHome" style="margin-top:0">🏠 帰宅した</button>
+      </div>
+      <div class="muted" id="homeState"></div>
+    </div>
     <div class="seg">
       <button id="modeGo" class="on-go">行き(お迎え)</button>
       <button id="modeBack">帰り(お送り)</button>
@@ -202,14 +210,6 @@
       <button class="btn" id="btnClear">選び直す</button>
     </div>
 
-    <!-- 仕事が終わって家に着いたら押す -->
-    <div class="card" id="homeCard">
-      <div class="row">
-        <button class="btn big" id="btnStart" style="margin-top:0">🚗 出発した</button>
-        <button class="btn big" id="btnHome" style="margin-top:0">🏠 帰宅した</button>
-      </div>
-      <div class="muted" id="homeState"></div>
-    </div>
   </section>
 
   <!-- 記録 -->
