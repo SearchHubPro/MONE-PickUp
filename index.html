@@ -1361,6 +1361,8 @@
 
   function renderAll(){ renderPick(); renderGirls(); renderLog(); renderHomeState(); }
   renderAll();
+  // 夜中0時〜4時59分にアプリを開いたら、最初から「帰り」にする(開いた時だけ。使っている途中では切り替えない)
+  if(new Date().getHours() < 5) setMode("back");
 })();
 </script>
 </body>
