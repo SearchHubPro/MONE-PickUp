@@ -162,6 +162,19 @@
   .cal-legend .sh.back{background:linear-gradient(90deg,transparent 50%,#fbefa0 50%)}
   .cal-legend{flex-wrap:wrap;row-gap:6px}
   .shiftbox{background:var(--card2);border-radius:10px;padding:10px;margin-bottom:10px}
+  /* 支払い(月〜土の分を翌週の土曜に受け取る) */
+  .cal .cd{position:relative}
+  .cal .paymk{position:absolute;top:1px;right:3px;font-size:11px;font-weight:800;color:var(--warn)}
+  .cal .paymk.done{color:var(--ok)}
+  #payCard .big{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+  #payCard .warnline{color:var(--warn);font-size:13px;margin-top:6px}
+  .paylist{margin-top:12px;border-top:1px dashed var(--line);padding-top:8px}
+  .payrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .payrow:last-child{border-bottom:0}
+  .payrow .amt{font-weight:800;font-variant-numeric:tabular-nums}
+  .payrow.done .amt{color:var(--sub)}
+  .payrow button{flex:none;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;padding:6px 10px;font-size:13px;font-weight:700;font-family:inherit}
+  .payrow button.on{background:var(--ok);border-color:var(--ok);color:#06210f}
   .shiftbox .seg{margin:6px 0 0;background:var(--card)}
   .shiftbox .seg button{font-size:13px;padding:9px 0}
   .cal .dot{width:20px;height:20px;border-radius:50%;background:var(--accent);border:2px solid var(--accent)}
@@ -232,6 +245,10 @@
       <span class="muted" id="lockState"></span>
       <button class="btn small" id="lLock">🔓 ロックする</button>
     </div>
+    <div class="card" id="payCard">
+      <h2>次の支払い(月〜土の分を翌週の土曜)</h2>
+      <div id="payNext"></div>
+    </div>
     <div class="month">
       <button class="btn small" id="mPrev">◀ 前の月</button>
       <b id="mLabel"></b>
@@ -255,7 +272,8 @@
     <div class="card" id="calCard">
       <h2 id="calTitle"></h2>
       <div class="cal" id="cal"></div>
-      <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
+      <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span><span style="color:var(--warn);font-weight:800">¥</span> 支払日</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
+      <div class="paylist" id="payList"></div>
     </div>
     <div class="row" style="margin-bottom:14px">
       <button class="btn" id="lAdd" style="margin:0">＋ 手で追加</button>
@@ -425,7 +443,7 @@
   const defaults = () => ({girls:[], store:{name:"",address:"",lat:null,lng:null},
                            arrive:"20:50", buffer:5, board:2, logs:[],
                            home:{address:"",lat:null,lng:null}, gasPrice:170, fuelEff:10,
-                           days:{}, locked:false, shifts:{}});
+                           days:{}, locked:false, shifts:{}, paid:{}});
   function load(){
     try{ const s = localStorage.getItem(KEY_DATA); if(s) return Object.assign(defaults(), JSON.parse(s)); }catch(e){}
     return defaults();
@@ -442,6 +460,7 @@
   if(!data.days || typeof data.days!=="object") data.days={};
   if(!data.home) data.home={address:"",lat:null,lng:null};
   if(!data.shifts || typeof data.shifts!=="object") data.shifts={}; // シフト {"YYYY-MM-DD":"both"|"go"|"back"}
+  if(!data.paid || typeof data.paid!=="object") data.paid={};     // 受け取り済みの支払日 {"YYYY-MM-DD"(支払日):true}
   let mode = "go";
   let backTo = "store";      // 帰りの行き先:store=お店に戻る / home=自宅(アプリを開くたびにお店に戻る)
   let startFrom = "current"; // 行きの出発地:current=現在地 / home=自宅 / store=お店(アプリを開くたびに現在地に戻る)     // go=行き / back=帰り
@@ -1027,6 +1046,63 @@
   $("mNext").onclick = () => { viewMonth.m++; if(viewMonth.m>11){viewMonth.m=0;viewMonth.y++;} selDay=null; renderLog(); };
 
   // その月のカレンダー:送迎した日に丸(日当8,000円=●、4,000円=◐)、今日(朝6時までは前の日)は赤枠、選んだ日は青
+  // ---------- 支払い ----------
+  // 月〜土に送迎した分の日当を、翌週の土曜に受け取る。日曜は送迎なし(もしあれば次の週の分に入れる)
+  const addDays=(d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
+  function payWeekOf(date){
+    const d=parseYmd(date), w=d.getDay();
+    const sat = w===0 ? addDays(d,6) : addDays(d,6-w);           // その週(月〜土)の土曜
+    return {mon:ymd(addDays(sat,-5)), sat:ymd(sat), pay:ymd(addDays(sat,7))};
+  }
+  // dayMoney と同じ計算。ただし日ごとの値(days)を新しく作らない(ほかの月の日の単価を勝手に今の設定で固定しないため)
+  function dayMoneyPeek(date){
+    const dd=data.days[date]||{wage:8000, gas:+data.gasPrice||0, eff:+data.fuelEff||10};
+    const km=data.logs.filter(l=>l.date===date).reduce((s,l)=>s+(+l.km||0),0);
+    const gas=Math.round(km/(+dd.eff||10)*(+dd.gas||0));
+    return {wage:+dd.wage||0, net:(+dd.wage||0)-gas};
+  }
+  // 支払日ごとのまとまり {pay, mon, sat, days[], wage, net} を支払日の古い順で
+  function payGroups(){
+    const byPay={};
+    [...new Set(data.logs.map(l=>l.date))].sort().forEach(day=>{
+      const wk=payWeekOf(day), m=dayMoneyPeek(day);
+      const g = byPay[wk.pay] || (byPay[wk.pay]={pay:wk.pay, mon:wk.mon, sat:wk.sat, days:[], wage:0, net:0});
+      g.days.push(day); g.wage+=m.wage; g.net+=m.net;
+    });
+    return Object.values(byPay).sort((a,b)=>a.pay.localeCompare(b.pay));
+  }
+  const md = s => { const d=parseYmd(s); return `${d.getMonth()+1}/${d.getDate()}`; };
+  const mdw = s => { const d=parseYmd(s); return `${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`; };
+  function renderPay(groups){
+    const today=bizDate();
+    const up=groups.filter(g=>g.pay>=today);
+    let h="";
+    if(!up.length) h='<div class="muted">次の支払いはまだないで</div>';
+    else{
+      const g=up[0], going=g.sat>=today;
+      h=`<div><span class="big">${mdw(g.pay)} ${yen(g.wage)}</span>${data.paid[g.pay]?' <span class="badge b-ok">受け取り済み</span>':""}</div>
+        <div class="muted">${md(g.mon)}〜${md(g.sat)} の${g.days.length}日分${going?"(途中)":""}・手取り ${yen(g.net)}(ガソリン代 ${yen(g.wage-g.net)} 引き)</div>`;
+      if(up[1]){ const g2=up[1]; h+=`<div class="muted" style="margin-top:4px">その次 ${mdw(g2.pay)} ${yen(g2.wage)}(${md(g2.mon)}〜${g2.sat>=today?" 途中":md(g2.sat)} ${g2.days.length}日分)</div>`; }
+    }
+    const late=groups.filter(g=>g.pay<today && !data.paid[g.pay]);
+    if(late.length) h+=`<div class="warnline">受け取り済みを付けてない支払いが${late.length}件(${late.map(g=>md(g.pay)+" "+yen(g.wage)).join("・")})</div>`;
+    $("payNext").innerHTML=h;
+    // この月に来る支払いの一覧(カレンダーの下)
+    const mine=groups.filter(g=>g.pay.startsWith(monthKey()+"-"));
+    $("payList").innerHTML = mine.length
+      ? '<div class="muted">この月の支払い</div>'+mine.map(g=>`<div class="payrow ${data.paid[g.pay]?"done":""}">
+          <div><div class="amt">${mdw(g.pay)} ${yen(g.wage)}</div><div class="muted">${md(g.mon)}〜${md(g.sat)} の${g.days.length}日分${g.sat>=today?"(途中)":""}</div></div>
+          <button data-paid="${g.pay}" class="${data.paid[g.pay]?"on":""}">${data.paid[g.pay]?"✓ 受け取り済み":"受け取った"}</button></div>`).join("")
+      : '<div class="muted">この月に来る支払いはないで</div>';
+    $("payList").querySelectorAll("[data-paid]").forEach(b=>b.onclick=()=>{
+      const k=b.dataset.paid;
+      if(data.paid[k]){ if(!confirm(`${md(k)}の受け取り済みを外す?`)) return; delete data.paid[k]; }
+      else data.paid[k]=true;
+      save(); renderLog();
+      toast(data.paid[k] ? `${md(k)}の支払いを受け取り済みにしたで` : `${md(k)}の受け取り済みを外したで`);
+    });
+  }
+
   const SHIFT_LABEL={both:"行き・帰り", go:"行きだけ", back:"帰りだけ"};
   // 選んだ日(今日以降)のシフトを選ぶボタン。ロック中でも入れられる(シフトは記録とは別の予定)
   function shiftBoxHtml(day){
@@ -1044,8 +1120,9 @@
       toast(`${d.getMonth()+1}/${d.getDate()} ${v==="none"?"シフトなしにした":SHIFT_LABEL[v]+"にした"}で`);
     });
   }
-  function renderCal(days, logs){
+  function renderCal(days, logs, groups){
     const y=viewMonth.y, m=viewMonth.m;
+    const payDays={}; (groups||[]).forEach(g=>payDays[g.pay]=g);
     const first=new Date(y,m,1).getDay(), n=new Date(y,m+1,0).getDate();
     const has=new Set(days), today=bizDate();
     const shiftN=Object.keys(data.shifts).filter(k=>k.startsWith(monthKey()+"-") && k>=today && SHIFT_LABEL[data.shifts[k]]).length;
@@ -1056,7 +1133,8 @@
       const key=`${y}-${pad(m+1)}-${pad(d)}`, w=(first+d-1)%7;
       const mark = has.has(key) ? `<span class="dot ${dayMoney(key,logs).wage>=8000?"":"half"}"></span>` : "";
       const sh = key>=today && SHIFT_LABEL[data.shifts[key]] ? "sh-"+data.shifts[key] : ""; // シフトの色は今日以降だけ
-      h+=`<button class="cd ${w===0?"sun":w===6?"sat":""} ${key===today?"today":""} ${key===selDay?"sel":""} ${sh}" data-cal="${key}"><span class="num">${d}</span>${mark}</button>`;
+      const pg=payDays[key], pm = pg ? `<span class="paymk ${data.paid[key]?"done":""}">¥</span>` : "";
+      h+=`<button class="cd ${w===0?"sun":w===6?"sat":""} ${key===today?"today":""} ${key===selDay?"sel":""} ${sh}" data-cal="${key}"><span class="num">${d}</span>${mark}${pm}</button>`;
     }
     $("cal").innerHTML=h;
     $("cal").querySelectorAll("[data-cal]").forEach(b=>b.onclick=()=>{ selDay = selDay===b.dataset.cal ? null : b.dataset.cal; renderLog(); });
@@ -1130,7 +1208,9 @@
     $("stHourly").textContent = wk.n ? yen(hourlyOf(wk.net,wk.min)) : "—";
     $("stHourlyL").textContent = wk.n ? `平均時給(${wk.n}日分)` : "平均時給";
     if(selDay && !selDay.startsWith(monthKey()+"-")) selDay=null;
-    renderCal(days, logs);
+    const groups=payGroups();
+    renderPay(groups);
+    renderCal(days, logs, groups);
     if(selDay){
       const sd=parseYmd(selDay);
       $("logTitle").textContent=`${sd.getMonth()+1}月${sd.getDate()}日の記録`;
@@ -1391,6 +1471,7 @@
       if(!data.days || typeof data.days!=="object") data.days={};
       if(!data.home) data.home={address:"",lat:null,lng:null};
       if(!data.shifts || typeof data.shifts!=="object") data.shifts={};
+      if(!data.paid || typeof data.paid!=="object") data.paid={};
       selected=[]; lastRoute=null;
       save(); renderAll(); fillSettings(); toast("読み込んだで");
     }catch(err){ toast("読み込めへんかった:"+err.message); }
