@@ -294,6 +294,8 @@
       <div class="checks" id="lChecks"></div>
       <label>登録してない子(カンマ区切り)</label>
       <input id="lOther" placeholder="例:ゆい, さき" autocomplete="off">
+      <label>備考</label>
+      <input id="lMemo" placeholder="例:途中でコンビニ寄った" autocomplete="off">
       <label>走行距離(km・任意)</label>
       <input id="lKm" type="number" step="0.1" min="0" inputmode="decimal" placeholder="例:25.4">
       <div class="row">
@@ -1232,7 +1234,7 @@
         <div class="trip" data-log="${l.id}">
           <span class="badge ${l.dir==="go"?"b-go":"b-back"}">${l.dir==="go"?"行き":"帰り"}</span>
           <div class="who"><b>${l.names.length}人</b> <span class="muted">${esc(l.names.join("・"))}</span>
-            <div class="muted">${l.km!=null&&l.km!==""?(+l.km).toFixed(1)+"km":"距離なし"}</div></div>
+            <div class="muted">${l.km!=null&&l.km!==""?(+l.km).toFixed(1)+"km":"距離なし"}</div>${l.memo?`<div class="muted">📝 ${esc(l.memo)}</div>`:""}</div>
           <span class="muted">${l.manual?"手入力":(l.at?hm(new Date(l.at)):"")}</span>
         </div>`).join("");
       const pay=`<div class="pay">
@@ -1302,6 +1304,7 @@
     const regNames=new Set(reg.map(g=>g.name));
     $("lOther").value=[...names].filter(n=>!regNames.has(n)).join(", ");
     $("lKm").value = l && l.km!=null && l.km!=="" ? l.km : "";
+    $("lMemo").value = l && l.memo ? l.memo : "";
     $("lDel").style.display=l?"block":"none";
     $("lForm").style.display="block";
     $("lForm").scrollIntoView({behavior:"smooth",block:"start"});
@@ -1315,15 +1318,18 @@
     const names=[...$("lChecks").querySelectorAll("input:checked")].map(c=>c.value)
       .concat($("lOther").value.split(/[,、，]/).map(s=>s.trim()).filter(Boolean));
     if(!names.length){ toast("誰か1人は選んでな"); return; }
+    const memo=$("lMemo").value.trim();
     const kmRaw=$("lKm").value.trim();
     const km = kmRaw==="" ? null : Math.max(0, Math.round(parseFloat(kmRaw)*10)/10);
     if(kmRaw!=="" && !isFinite(km)){ toast("距離は数字で入れてな"); return; }
     ensureDay(date);
     const id=$("lId").value;
     if(id){
-      const l=data.logs.find(x=>x.id===id); if(l){ l.date=date; l.dir=formDir; l.names=names; l.km=km; }
+      const l=data.logs.find(x=>x.id===id); if(l){ l.date=date; l.dir=formDir; l.names=names; l.km=km; if(memo) l.memo=memo; else delete l.memo; }
     }else{
-      data.logs.push({id:uid(), date, dir:formDir, names, km, at:new Date().toISOString(), manual:true});
+      const nl={id:uid(), date, dir:formDir, names, km, at:new Date().toISOString(), manual:true};
+      if(memo) nl.memo=memo;
+      data.logs.push(nl);
     }
     save();
     const d=parseYmd(date); viewMonth={y:d.getFullYear(), m:d.getMonth()};
@@ -1401,11 +1407,11 @@
     rows.push(["合計","","","",tot.km.toFixed(1),tot.wage,"","",tot.gas,tot.net,"","",tot.wmin?hmm(tot.wmin):"",tot.wmin?hourlyOf(tot.wnet,tot.wmin):""]);
     if(tot.wmin) rows.push(["(合計の時給は、働いた時間が出た日だけの 差し引き日当 ÷ 働いた時間)"]);
     rows.push([]);
-    rows.push(["■送迎の明細"],["日付","曜日","区分","人数","名前","走行距離(km)","記録時刻"]);
+    rows.push(["■送迎の明細"],["日付","曜日","区分","人数","名前","走行距離(km)","記録時刻","備考"]);
     logs.forEach(l=>{
       const d=parseYmd(l.date);
       rows.push([l.date, WD[d.getDay()], l.dir==="go"?"行き":"帰り", l.names.length, l.names.join("・"),
-        l.km!=null&&l.km!==""?(+l.km).toFixed(1):"", l.manual?"手入力":(l.at?hm(new Date(l.at)):"")]);
+        l.km!=null&&l.km!==""?(+l.km).toFixed(1):"", l.manual?"手入力":(l.at?hm(new Date(l.at)):""), l.memo||""]);
     });
     rows.push([]);
     rows.push(["送迎した日数", days.length]);
@@ -1480,8 +1486,8 @@
 
   function renderAll(){ renderPick(); renderGirls(); renderLog(); renderHomeState(); }
   renderAll();
-  // 夜中0時〜4時59分にアプリを開いたら、最初から「帰り」にする(開いた時だけ。使っている途中では切り替えない)
-  if(new Date().getHours() < 5) setMode("back");
+  // 夜23時〜朝4時59分にアプリを開いたら、最初から「帰り」にする(開いた時だけ。使っている途中では切り替えない)
+  { const h=new Date().getHours(); if(h>=23 || h<5) setMode("back"); }
 })();
 </script>
 </body>
