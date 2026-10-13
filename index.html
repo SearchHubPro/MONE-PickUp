@@ -510,9 +510,23 @@
     const d = new Date(); d.setHours(h,m,0,0); return d;
   }
   const WAGES=[8000,4000];
-  function ensureDay(date){
-    if(!data.days[date]) data.days[date]={wage:8000, gas:+data.gasPrice||0, eff:+data.fuelEff||10};
+  // auto=true:新しく作る日は日当を自動で決める対象(wageAuto)にする。古い記録の日を後から作る時は auto=false(今まで通り)
+  function ensureDay(date, auto=true){
+    if(!data.days[date]){
+      data.days[date]={wage:8000, gas:+data.gasPrice||0, eff:+data.fuelEff||10};
+      if(auto) data.days[date].wageAuto=true;
+    }
     return data.days[date];
+  }
+  // 日当の自動:その日に行きだけ・帰りだけ=4,000円、両方=8,000円。
+  // 自動の対象の日(wageAuto)だけ。手で 8,000/4,000 を押した日(wageManual)と、この機能より前からある日は変えない
+  function autoWage(date){
+    const dd=data.days[date];
+    if(!dd || !dd.wageAuto || dd.wageManual) return;
+    const ls=data.logs.filter(l=>l.date===date);
+    const go=ls.some(l=>l.dir==="go"), back=ls.some(l=>l.dir==="back");
+    if(!go && !back) return;
+    dd.wage = go && back ? 8000 : 4000;
   }
   const yen = n => "¥"+Math.round(n).toLocaleString("ja-JP");
   const sortedGirls = () => [...data.girls].sort((a,b)=>a.name.localeCompare(b.name,"ja"));
@@ -977,8 +991,9 @@
     ensureDay(date);
     const key=[...names].sort().join("|");
     const dup=data.logs.find(l=>l.date===date && l.dir===dir && [...l.names].sort().join("|")===key);
-    if(dup){ dup.km=Math.round(km*10)/10; save(); return "dup"; } // 押し直したときは距離だけ最新にする
+    if(dup){ dup.km=Math.round(km*10)/10; autoWage(date); save(); return "dup"; } // 押し直したときは距離だけ最新にする
     data.logs.push({id:uid(), date, dir, names:[...names], km:Math.round(km*10)/10, at:new Date().toISOString()});
+    autoWage(date);
     save(); return "ok";
   }
 
@@ -1026,6 +1041,7 @@
     const day=bizDate(), now=new Date(), key=kind==="start"?"startAt":"homeAt";
     const again=!!(data.days[day] && data.days[day][key]);
     ensureDay(day)[key]=now.toISOString();
+    if(kind==="home") autoWage(day); // 帰宅を押した時にその日の記録で日当を決める
     if(!save()) return;
     const d=parseYmd(day);
     let msg=`${d.getMonth()+1}/${d.getDate()} ${kind==="start"?"出発":"帰宅"} ${hm(now)} を${again?"上書き":"記録"}したで`;
@@ -1195,7 +1211,7 @@
     const logs=monthLogs();
     const days=[...new Set(logs.map(l=>l.date))];
     let created=false;
-    days.forEach(d=>{ if(!data.days[d]){ ensureDay(d); created=true; } });
+    days.forEach(d=>{ if(!data.days[d]){ ensureDay(d,false); created=true; } });
     if(created) save();
     $("stDays").textContent=days.length;
     $("stGo").textContent=logs.filter(l=>l.dir==="go").reduce((s,l)=>s+l.names.length,0);
@@ -1238,7 +1254,7 @@
           <span class="muted">${l.manual?"手入力":(l.at?hm(new Date(l.at)):"")}</span>
         </div>`).join("");
       const pay=`<div class="pay">
-          <div class="wage"><span class="muted">日当</span>${WAGES.map(v=>`<button data-day="${day}" data-wage="${v}" class="${m.wage===v?"on":""}" ${locked?"disabled":""}>${v.toLocaleString()}円</button>`).join("")}</div>
+          <div class="wage"><span class="muted">日当</span>${WAGES.map(v=>`<button data-day="${day}" data-wage="${v}" class="${m.wage===v?"on":""}" ${locked?"disabled":""}>${v.toLocaleString()}円</button>`).join("")}${data.days[day]&&data.days[day].wageAuto&&!data.days[day].wageManual?'<span class="muted" style="font-size:12px">自動</span>':""}</div>
           <div>走行距離 ${m.km.toFixed(1)}km / ガソリン代 ${yen(m.gas)} <span class="muted">(${m.gasPrice}円/L・${m.eff}km/L)</span></div>
           <div class="net">差し引き日当 ${yen(m.net)}</div>
           <div class="work">
@@ -1256,7 +1272,7 @@
     $("logList").querySelectorAll("[data-home]").forEach(b=>b.onclick=()=>openHomeForm(b.dataset.home));
     $("logList").querySelectorAll("[data-wage]").forEach(b=>b.onclick=()=>{
       if(data.locked) return;
-      ensureDay(b.dataset.day).wage=+b.dataset.wage; save(); renderLog();
+      const dd=ensureDay(b.dataset.day); dd.wage=+b.dataset.wage; dd.wageManual=true; save(); renderLog(); // 手で決めた日は以後自動で変えない
     });
   }
 
@@ -1324,13 +1340,15 @@
     if(kmRaw!=="" && !isFinite(km)){ toast("距離は数字で入れてな"); return; }
     ensureDay(date);
     const id=$("lId").value;
+    let oldDate=null;
     if(id){
-      const l=data.logs.find(x=>x.id===id); if(l){ l.date=date; l.dir=formDir; l.names=names; l.km=km; if(memo) l.memo=memo; else delete l.memo; }
+      const l=data.logs.find(x=>x.id===id); if(l){ oldDate=l.date; l.date=date; l.dir=formDir; l.names=names; l.km=km; if(memo) l.memo=memo; else delete l.memo; }
     }else{
       const nl={id:uid(), date, dir:formDir, names, km, at:new Date().toISOString(), manual:true};
       if(memo) nl.memo=memo;
       data.logs.push(nl);
     }
+    autoWage(date); if(oldDate && oldDate!==date) autoWage(oldDate);
     save();
     const d=parseYmd(date); viewMonth={y:d.getFullYear(), m:d.getMonth()};
     $("lForm").style.display="none"; renderLog(); toast("記録を保存したで");
@@ -1339,7 +1357,10 @@
     if(data.locked){ toast("ロック中やで"); return; }
     const id=$("lId").value; if(!id) return;
     if(!confirm("この記録を削除する?")) return;
-    data.logs=data.logs.filter(x=>x.id!==id); save();
+    const gone=data.logs.find(x=>x.id===id);
+    data.logs=data.logs.filter(x=>x.id!==id);
+    if(gone) autoWage(gone.date);
+    save();
     $("lForm").style.display="none"; renderLog(); toast("削除したで");
   };
 
