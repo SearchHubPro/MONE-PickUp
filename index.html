@@ -162,6 +162,7 @@
   .cal-legend .sh.back{background:linear-gradient(90deg,transparent 50%,#fbefa0 50%)}
   .cal-legend{flex-wrap:wrap;row-gap:6px}
   .shiftbox{background:var(--card2);border-radius:10px;padding:10px;margin-bottom:10px}
+  #calShift .shiftbox{margin:10px 0 0;border:1px solid var(--accent)}
   /* 支払い(月〜土の分を翌週の土曜に受け取る) */
   .cal .cd{position:relative}
   .cal .paymk{position:absolute;top:1px;right:3px;font-size:11px;font-weight:800;color:var(--warn)}
@@ -272,6 +273,7 @@
     <div class="card" id="calCard">
       <h2 id="calTitle"></h2>
       <div class="cal" id="cal"></div>
+      <div id="calShift"></div><!-- 今日以降の日をタップした時のシフトのボタン(カレンダーのすぐ下) -->
       <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span><span style="color:var(--warn);font-weight:800">¥</span> 支払日</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
       <div class="paylist" id="payList"></div>
     </div>
@@ -1130,7 +1132,7 @@
       <div class="seg sm">${opts.map(([v,t])=>`<button data-shift="${v}" class="${cur===v?"on-go":""}">${t}</button>`).join("")}</div></div>`;
   }
   function bindShift(){
-    $("logList").querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
+    $("calShift").querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
       const day=selDay; if(!day) return;
       const v=b.dataset.shift, d=parseYmd(day);
       if(v==="none") delete data.shifts[day]; else data.shifts[day]=v;
@@ -1235,16 +1237,17 @@
     }
     const allBtn='<button class="btn" id="calAll" style="margin:0 0 10px">全部の日を見る</button>';
     const future = selDay && selDay>=bizDate();
-    const shiftBox = future ? shiftBoxHtml(selDay) : "";
+    // シフトのボタンはカレンダーのすぐ下に出す(下の記録の欄だと画面の外になって見えなかったため)
+    $("calShift").innerHTML = future ? shiftBoxHtml(selDay) : "";
+    if(future) bindShift();
     if(selDay && !days.includes(selDay)){
-      $("logList").innerHTML=allBtn+shiftBox+(future?"":'<div class="empty">この日の記録はないで</div>');
+      $("logList").innerHTML=allBtn+(future?"":'<div class="empty">この日の記録はないで</div>');
       $("calAll").onclick=()=>{ selDay=null; renderLog(); };
-      bindShift();
       return;
     }
     if(!days.length){ $("logList").innerHTML='<div class="empty">この月の記録はまだないで</div>'; return; }
     const shown = selDay ? [selDay] : [...days].reverse();
-    $("logList").innerHTML=(selDay?allBtn+shiftBox:"")+shown.map(day=>{
+    $("logList").innerHTML=(selDay?allBtn:"")+shown.map(day=>{
       const d=parseYmd(day), w=d.getDay(), m=dayMoney(day,logs), wk=workOf(day);
       const trips=logs.filter(l=>l.date===day).map(l=>`
         <div class="trip" data-log="${l.id}">
@@ -1266,7 +1269,7 @@
         </div>`;
       return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}<button class="copybtn" data-copy="${day}">📋 報告をコピー</button></div>`;
     }).join("");
-    if(selDay){ $("calAll").onclick=()=>{ selDay=null; renderLog(); }; bindShift(); }
+    if(selDay){ $("calAll").onclick=()=>{ selDay=null; renderLog(); }; }
     if(!locked) $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>openLogForm(el.dataset.log));
     $("logList").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyReport(b.dataset.copy));
     $("logList").querySelectorAll("[data-home]").forEach(b=>b.onclick=()=>openHomeForm(b.dataset.home));
