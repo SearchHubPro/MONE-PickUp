@@ -205,6 +205,10 @@
         <button class="btn big" id="btnStart" style="margin-top:0">🚗 出発した</button>
         <button class="btn big" id="btnHome" style="margin-top:0">🏠 帰宅した</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="btnMvHome" style="margin-top:0">🏠 一度家に帰る</button>
+        <button class="btn" id="btnMvStore" style="margin-top:0">🏪 店に戻る</button>
+      </div>
       <div class="muted" id="homeState"></div>
     </div>
     <div class="seg">
@@ -1045,6 +1049,28 @@
     const url=mapsUrl(r, true);
     setTimeout(()=>{ location.href=url; }, 700);
   };
+  // ---------- 一度家に帰る/店に戻る ----------
+  // 行きと帰りの間に店→家・家→店を走る時。ナビ(今いる所から、下道)を開き、店⇔家の道のりを「移動」の記録に残す(走行距離・ガソリン代に足す)。
+  // 報告コピー・日当の自動・人数には数えない。家にいる時間は働いた時間から引かない(本人の指定)
+  async function moveTrip(to){
+    if(!hasLL(data.home)){ toast("先に「設定」で自宅の位置を登録してな"); return; }
+    if(!hasLL(data.store)){ toast("先に「設定」でお店の位置を登録してな"); return; }
+    const from = to==="home" ? data.store : data.home, dest = to==="home" ? data.home : data.store;
+    const btn = to==="home" ? $("btnMvHome") : $("btnMvStore");
+    btn.disabled=true; toast("道のりを計算中…");
+    let km=null; const key=getKey();
+    if(key){ try{ km=(await computeRoute(key, from, dest, [])).km; }catch(e){ km=null; } }
+    if(km==null) km=dist(from,dest)*1.4; // キーなし・失敗は直線距離の1.4倍を目安に
+    const date=bizDate(); ensureDay(date);
+    data.logs.push({id:uid(), date, dir:"move", move:to, names:[], km:Math.round(km*10)/10, at:new Date().toISOString()});
+    save(); btn.disabled=false;
+    toast(`${MOVE_LABEL[to]} ${(Math.round(km*10)/10).toFixed(1)}km を記録したで`);
+    const url="https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination="+encodeURIComponent(q(dest));
+    setTimeout(()=>{ location.href=url; }, 700);
+  }
+  $("btnMvHome").onclick = () => moveTrip("home");
+  $("btnMvStore").onclick = () => moveTrip("store");
+
   // ルートを見るだけ:記録・走行距離・時給の出発時刻には何も残さない
   $("btnView").onclick = () => {
     const r=lastRoute; if(!r) return;
@@ -1082,7 +1108,9 @@
   let viewMonth = (()=>{ const d=parseYmd(bizDate()); return {y:d.getFullYear(), m:d.getMonth()}; })();
   const monthKey = () => viewMonth.y+"-"+pad(viewMonth.m+1);
   const monthLogs = () => data.logs.filter(l=>l.date.startsWith(monthKey()+"-"))
-    .sort((a,b)=> a.date===b.date ? (a.dir===b.dir ? (a.at||"").localeCompare(b.at||"") : (a.dir==="go"?-1:1)) : a.date.localeCompare(b.date));
+    .sort((a,b)=> a.date===b.date ? (a.dir===b.dir ? (a.at||"").localeCompare(b.at||"") : DIR_ORDER[a.dir]-DIR_ORDER[b.dir]) : a.date.localeCompare(b.date));
+  const DIR_ORDER={go:0, move:1, back:2};
+  const MOVE_LABEL={home:"店→家", store:"家→店"};
   let selDay=null; // カレンダーで選んだ日(null=全部の日を表示)
   $("mPrev").onclick = () => { viewMonth.m--; if(viewMonth.m<0){viewMonth.m=11;viewMonth.y--;} selDay=null; renderLog(); };
   $("mNext").onclick = () => { viewMonth.m++; if(viewMonth.m>11){viewMonth.m=0;viewMonth.y++;} selDay=null; renderLog(); };
@@ -1416,8 +1444,9 @@
       const d=parseYmd(day), w=d.getDay(), m=dayMoney(day,logs), wk=workOf(day);
       const trips=logs.filter(l=>l.date===day).map(l=>`
         <div class="trip" data-log="${l.id}">
-          <span class="badge ${l.dir==="go"?"b-go":"b-back"}">${l.dir==="go"?"行き":"帰り"}</span>
-          <div class="who"><b>${l.names.length}人</b> <span class="muted">${esc(l.names.join("・"))}</span>
+          ${l.dir==="move" ? `<span class="badge" style="color:var(--sub)">移動</span>
+          <div class="who"><b>${MOVE_LABEL[l.move]||"移動"}</b>` : `<span class="badge ${l.dir==="go"?"b-go":"b-back"}">${l.dir==="go"?"行き":"帰り"}</span>
+          <div class="who"><b>${l.names.length}人</b> <span class="muted">${esc(l.names.join("・"))}</span>`}
             <div class="muted">${l.km!=null&&l.km!==""?(+l.km).toFixed(1)+"km":"距離なし"}</div>${l.memo?`<div class="muted">📝 ${esc(l.memo)}</div>`:""}</div>
           <span class="muted">${l.manual?"手入力":(l.at?hm(new Date(l.at)):"")}</span>
         </div>`).join("");
@@ -1435,7 +1464,14 @@
       return `<div class="day"><div class="dt ${w===0?"sun":w===6?"sat":""}">${d.getMonth()+1}月${d.getDate()}日(${WD[w]})</div>${trips}${pay}<button class="copybtn" data-copy="${day}">📋 報告をコピー</button></div>`;
     }).join("");
     if(selDay){ $("calAll").onclick=()=>{ selDay=null; renderLog(); }; }
-    if(!locked) $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>openLogForm(el.dataset.log));
+    if(!locked) $("logList").querySelectorAll("[data-log]").forEach(el=>el.onclick=()=>{
+      const l=data.logs.find(x=>x.id===el.dataset.log); if(!l) return;
+      if(l.dir==="move"){ // 移動の記録は直す所がないので、消すかどうかだけ聞く
+        if(!confirm(`この移動(${MOVE_LABEL[l.move]||"移動"} ${(+l.km||0).toFixed(1)}km)の記録を消す?`)) return;
+        data.logs=data.logs.filter(x=>x.id!==l.id); save(); renderLog(); toast("移動の記録を消したで"); return;
+      }
+      openLogForm(l.id);
+    });
     $("logList").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyReport(b.dataset.copy));
     $("logList").querySelectorAll("[data-home]").forEach(b=>b.onclick=()=>openHomeForm(b.dataset.home));
     $("logList").querySelectorAll("[data-wage]").forEach(b=>b.onclick=()=>{
@@ -1599,7 +1635,7 @@
     rows.push(["■送迎の明細"],["日付","曜日","区分","人数","名前","走行距離(km)","記録時刻","備考"]);
     logs.forEach(l=>{
       const d=parseYmd(l.date);
-      rows.push([l.date, WD[d.getDay()], l.dir==="go"?"行き":"帰り", l.names.length, l.names.join("・"),
+      rows.push([l.date, WD[d.getDay()], l.dir==="move" ? `移動(${MOVE_LABEL[l.move]||""})` : (l.dir==="go"?"行き":"帰り"), l.names.length, l.names.join("・"),
         l.km!=null&&l.km!==""?(+l.km).toFixed(1):"", l.manual?"手入力":(l.at?hm(new Date(l.at)):""), l.memo||""]);
     });
     rows.push([]);
