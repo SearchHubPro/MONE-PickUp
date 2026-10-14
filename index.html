@@ -278,6 +278,7 @@
     <div class="muted" id="stKm" style="margin:-6px 0 14px;text-align:center"></div>
     <div class="card" id="calCard">
       <div class="calhead"><h2 id="calTitle"></h2><button class="btn small" id="calShare">📤 共有</button></div>
+      <div class="muted" id="shareState" style="margin:-6px 0 8px;font-size:12px"></div>
       <div class="cal" id="cal"></div>
       <div id="calShift"></div><!-- 今日以降の日をタップした時のシフトのボタン(カレンダーのすぐ下) -->
       <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span><span style="color:var(--warn);font-weight:800">¥</span> 支払日</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
@@ -415,6 +416,17 @@
       </div>
     </div>
 
+    <div class="card">
+      <h2>シフトの共有(家族のスマホにも出す)</h2>
+      <div id="ghState" style="margin-bottom:6px"></div>
+      <input id="sGhKey" type="password" placeholder="github_pat_..." autocomplete="off">
+      <p class="hint">GitHub の合い鍵を入れると、シフトだけ(日付と行き・帰り)を GitHub に保存して、同じリンクを開いた家族のスマホのカレンダーにも出る。名前・金額・記録は送らへん。合い鍵はこのスマホの中だけに保存(バックアップにも入らへん)。</p>
+      <div class="row">
+        <button class="btn" id="sGhShow">表示</button>
+        <button class="btn danger" id="sGhDel">合い鍵を消す</button>
+      </div>
+    </div>
+
     <button class="btn primary big" id="sSave">設定を保存</button>
 
     <div class="card" style="margin-top:14px">
@@ -464,6 +476,10 @@
   }
   function getKey(){ try{ return localStorage.getItem(KEY_API) || ""; }catch(e){ return ""; } }
   function setKey(k){ try{ k ? localStorage.setItem(KEY_API,k) : localStorage.removeItem(KEY_API); }catch(e){} }
+  // シフト共有用の GitHub の合い鍵(このスマホの中だけ。data に入れないのでバックアップにも入らない)
+  const KEY_GH = "sougei.ghkey.v1";
+  function getGhKey(){ try{ return localStorage.getItem(KEY_GH) || ""; }catch(e){ return ""; } }
+  function setGhKey(k){ try{ k ? localStorage.setItem(KEY_GH,k) : localStorage.removeItem(KEY_GH); }catch(e){} }
 
   let data = load();
   if(!Array.isArray(data.logs)) data.logs=[];
@@ -1082,7 +1098,8 @@
     const items=[];
     for(let d=1; d<=n; d++){
       const key=`${y}-${pad(m+1)}-${pad(d)}`;
-      if(key>=today && SHIFT_LABEL[data.shifts[key]]) items.push({key,d,w:(first+d-1)%7,v:data.shifts[key]});
+      const sv=shiftsShown()[key];
+      if(key>=today && SHIFT_LABEL[sv]) items.push({key,d,w:(first+d-1)%7,v:sv});
     }
     const listTop = P+80+50+rows*CH+80;
     const H = listTop + Math.max(1,items.length)*58 + P;
@@ -1100,7 +1117,7 @@
     for(let d=1; d<=n; d++){
       const key=`${y}-${pad(m+1)}-${pad(d)}`, i=first+d-1, w=i%7;
       const x=P+w*CW+GAP/2, yy=gy+50+Math.floor(i/7)*CH+GAP/2, cw=CW-GAP, ch=CH-GAP;
-      const v = key>=today ? data.shifts[key] : null;
+      const v = key>=today ? shiftsShown()[key] : null;
       c.save(); rr(x,yy,cw,ch,14); c.clip();
       c.fillStyle=BASE; c.fillRect(x,yy,cw,ch);
       c.fillStyle=YEL;
@@ -1205,21 +1222,85 @@
     });
   }
 
+  const GH_REPO="SearchHubPro/MONE-PickUp", GH_FILE="shifts.json";
+  const GH_API=`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`;
+  let shared=null;          // 家族のスマホで読んだ共有のシフト {updated, shifts}
+  let pushing=false, pushAgain=false;
+  // 家族のスマホか:合い鍵がなく、登録・記録・シフトが1つもない
+  function isViewer(){
+    return !getGhKey() && !data.girls.length && !data.logs.length && !Object.keys(data.shifts||{}).length;
+  }
+  function shiftsShown(){ return isViewer() ? ((shared && shared.shifts) || {}) : data.shifts; }
+  const b64enc = str => btoa(String.fromCharCode(...new TextEncoder().encode(str)));
+  const b64dec = b64 => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g,"")), c=>c.charCodeAt(0)));
+  const hmd = iso => { const d=new Date(iso); return `${d.getMonth()+1}/${d.getDate()} ${hm(d)}`; };
+  function renderShareState(){
+    const el=$("shareState"); if(!el) return;
+    if(isViewer()){
+      el.textContent = shared ? (shared.updated ? `共有されたシフト(見るだけ)・${hmd(shared.updated)} 更新` : "共有されたシフト(見るだけ)") : "共有されたシフトを読み込み中…";
+      if(shared===false) el.textContent="共有されたシフトはまだないで";
+      return;
+    }
+    const st=data.shiftSync||{};
+    if(!getGhKey()) el.textContent="";
+    else if(st.pending) el.textContent="共有待ち(電波のある時に自動でもう一回)";
+    else if(st.at) el.textContent=`共有済み ${hmd(st.at)}`;
+    else el.textContent="";
+  }
+  async function loadSharedShifts(){
+    let j=null;
+    try{
+      const r=await fetch(GH_API+"?ref=main&t="+Date.now(), {headers:{"Accept":"application/vnd.github+json"}, cache:"no-store"});
+      if(r.ok){ const f=await r.json(); j=JSON.parse(b64dec(f.content)); }
+      else if(r.status!==404) throw new Error("api "+r.status);
+    }catch(e){
+      try{ const r=await fetch(GH_FILE+"?t="+Date.now(), {cache:"no-store"}); if(r.ok) j=await r.json(); }catch(e2){}
+    }
+    shared = j && j.shifts && typeof j.shifts==="object" ? j : false;
+    renderLog();
+  }
+  async function pushShifts(){
+    const key=getGhKey(); if(!key) return;
+    data.shiftSync=Object.assign({}, data.shiftSync, {pending:true}); save(); renderShareState();
+    if(pushing){ pushAgain=true; return; } pushing=true;
+    const clean={}; Object.keys(data.shifts||{}).sort().forEach(k=>{ if(SHIFT_LABEL[data.shifts[k]]) clean[k]=data.shifts[k]; });
+    const body={updated:new Date().toISOString(), shifts:clean};
+    const H={"Authorization":"Bearer "+key, "Accept":"application/vnd.github+json"};
+    let ok=false;
+    try{
+      for(let tryNo=0; tryNo<2 && !ok; tryNo++){
+        let sha;
+        const g=await fetch(GH_API+"?ref=main&t="+Date.now(), {headers:H, cache:"no-store"});
+        if(g.ok) sha=(await g.json()).sha; else if(g.status!==404) throw new Error("get "+g.status);
+        const p=await fetch(GH_API, {method:"PUT", headers:Object.assign({"Content-Type":"application/json"},H),
+          body:JSON.stringify({message:"シフトを更新(送迎アプリから)", content:b64enc(JSON.stringify(body,null,1)), branch:"main", ...(sha?{sha}:{})})});
+        if(p.ok) ok=true; else if(p.status!==409 && p.status!==422) throw new Error("put "+p.status);
+      }
+    }catch(e){ ok=false; }
+    pushing=false;
+    data.shiftSync = ok ? {pending:false, at:body.updated} : Object.assign({}, data.shiftSync, {pending:true});
+    save(); renderShareState();
+    if(pushAgain){ pushAgain=false; pushShifts(); } // 保存中にまた変えた時は、最新をもう一回保存する
+  }
+
   const SHIFT_LABEL={both:"行き・帰り", go:"行きだけ", back:"帰りだけ"};
   // 選んだ日(今日以降)のシフトを選ぶボタン。ロック中でも入れられる(シフトは記録とは別の予定)
   function shiftBoxHtml(day){
-    const d=parseYmd(day), cur=data.shifts[day]||"none";
+    const d=parseYmd(day), cur=shiftsShown()[day]||"none";
+    if(isViewer()) return `<div class="shiftbox"><div class="muted">${d.getMonth()+1}月${d.getDate()}日のシフト(共有・見るだけ)</div>
+      <div style="font-weight:800;font-size:18px;margin-top:4px">${SHIFT_LABEL[cur]||"シフトなし"}</div></div>`;
     const opts=[["both","行き・帰り"],["go","行きだけ"],["back","帰りだけ"],["none","シフトなし"]];
     return `<div class="shiftbox"><div class="muted">${d.getMonth()+1}月${d.getDate()}日のシフト</div>
       <div class="seg sm">${opts.map(([v,t])=>`<button data-shift="${v}" class="${cur===v?"on-go":""}">${t}</button>`).join("")}</div></div>`;
   }
   function bindShift(){
     $("calShift").querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
-      const day=selDay; if(!day) return;
+      const day=selDay; if(!day || isViewer()) return;
       const v=b.dataset.shift, d=parseYmd(day);
       if(v==="none") delete data.shifts[day]; else data.shifts[day]=v;
       save(); renderLog();
       toast(`${d.getMonth()+1}/${d.getDate()} ${v==="none"?"シフトなしにした":SHIFT_LABEL[v]+"にした"}で`);
+      pushShifts();
     });
   }
   function renderCal(days, logs, groups){
@@ -1227,14 +1308,15 @@
     const payDays={}; (groups||[]).forEach(g=>payDays[g.pay]=g);
     const first=new Date(y,m,1).getDay(), n=new Date(y,m+1,0).getDate();
     const has=new Set(days), today=bizDate();
-    const shiftN=Object.keys(data.shifts).filter(k=>k.startsWith(monthKey()+"-") && k>=today && SHIFT_LABEL[data.shifts[k]]).length;
+    const SH=shiftsShown();
+    const shiftN=Object.keys(SH).filter(k=>k.startsWith(monthKey()+"-") && k>=today && SHIFT_LABEL[SH[k]]).length;
     $("calTitle").textContent=`${m+1}月(${days.length}日送迎・シフト${shiftN}日)`;
     let h=WD.map((w,i)=>`<div class="cw ${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("");
     for(let i=0;i<first;i++) h+='<div class="cd blank"></div>';
     for(let d=1; d<=n; d++){
       const key=`${y}-${pad(m+1)}-${pad(d)}`, w=(first+d-1)%7;
       const mark = has.has(key) ? `<span class="dot ${dayMoney(key,logs).wage>=8000?"":"half"}"></span>` : "";
-      const sh = key>=today && SHIFT_LABEL[data.shifts[key]] ? "sh-"+data.shifts[key] : ""; // シフトの色は今日以降だけ
+      const sh = key>=today && SHIFT_LABEL[SH[key]] ? "sh-"+SH[key] : ""; // シフトの色は今日以降だけ
       const pg=payDays[key], pm = pg ? `<span class="paymk ${data.paid[key]?"done":""}">¥</span>` : "";
       h+=`<button class="cd ${w===0?"sun":w===6?"sat":""} ${key===today?"today":""} ${key===selDay?"sel":""} ${sh}" data-cal="${key}"><span class="num">${d}</span>${mark}${pm}</button>`;
     }
@@ -1313,6 +1395,7 @@
     const groups=payGroups();
     renderPay(groups);
     renderCal(days, logs, groups);
+    renderShareState();
     if(selDay){
       const sd=parseYmd(selDay);
       $("logTitle").textContent=`${sd.getMonth()+1}月${sd.getDate()}日の記録`;
@@ -1535,7 +1618,15 @@
     $("hAddr").value=data.home.address||""; $("hLatLng").value=fmtLL(data.home);
     $("sGas").value=data.gasPrice; $("sEff").value=data.fuelEff;
     $("sKey").value=getKey(); renderKeyState();
+    $("sGhKey").value=getGhKey(); renderGhState();
   }
+  function renderGhState(){
+    $("ghState").innerHTML = getGhKey()
+      ? '<span class="badge b-ok">合い鍵あり:シフトを家族と共有する</span>'
+      : '<span class="badge b-warn">合い鍵なし:シフトはこのスマホだけ</span>';
+  }
+  $("sGhShow").onclick = () => { const k=$("sGhKey"); k.type = k.type==="password"?"text":"password"; $("sGhShow").textContent = k.type==="password"?"表示":"隠す"; };
+  $("sGhDel").onclick = () => { if(confirm("シフト共有の合い鍵を消す?(GitHub に保存したシフトはそのまま残る)")){ setGhKey(""); $("sGhKey").value=""; renderGhState(); renderLog(); toast("合い鍵を消したで"); } };
   function renderKeyState(){
     $("keyState").innerHTML = getKey()
       ? '<span class="badge b-ok">キー設定済み:道路で計算するモード</span>'
@@ -1563,7 +1654,10 @@
     data.buffer=Math.max(0,parseInt($("sBuffer").value,10)||0);
     data.board=Math.max(0,parseInt($("sBoard").value,10)||0);
     setKey($("sKey").value.trim());
-    if(save()){ renderKeyState(); renderAll(); toast("設定を保存したで"); }
+    const ghOld=getGhKey(), ghNew=$("sGhKey").value.replace(/\s/g,"");
+    setGhKey(ghNew);
+    if(save()){ renderKeyState(); renderGhState(); renderAll(); toast("設定を保存したで"); }
+    if(ghNew && ghNew!==ghOld) pushShifts(); // 合い鍵を入れた時に今のシフトを一度保存する
   };
 
   // ---------- バックアップ ----------
@@ -1592,6 +1686,23 @@
 
   function renderAll(){ renderPick(); renderGirls(); renderLog(); renderHomeState(); }
   renderAll();
+  // ---------- シフトの共有(GitHub の shifts.json) ----------
+  // 持ち主のスマホ:シフトを変えるたびに shifts.json を GitHub に保存(失敗したら次に開いた時にもう一回)
+  // 家族のスマホ(データが空・合い鍵なし):開いた時・戻ってきた時に shifts.json を読んで、記録の画面のカレンダーに出す(見るだけ)
+  if(isViewer()){
+    document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x.dataset.v==="log"));
+    document.querySelectorAll(".view").forEach(v=>v.classList.toggle("on",v.id==="v-log"));
+    renderLog();
+    // カレンダーが画面の一番上に来るようにする(上の空の集計を見せない)
+    requestAnimationFrame(()=>{ const sc=$("scroller"), cc=$("calCard"); sc.scrollTop += cc.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8; });
+    loadSharedShifts();
+  }else if(getGhKey() && data.shiftSync && data.shiftSync.pending){
+    pushShifts();
+  }
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden){
+    if(isViewer()) loadSharedShifts();
+    else if(getGhKey() && data.shiftSync && data.shiftSync.pending) pushShifts();
+  }});
   // 夜23時〜朝4時59分にアプリを開いたら、最初から「帰り」にする(開いた時だけ。使っている途中では切り替えない)
   { const h=new Date().getHours(); if(h>=23 || h<5) setMode("back"); }
 })();
