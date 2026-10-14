@@ -163,6 +163,12 @@
   .cal-legend{flex-wrap:wrap;row-gap:6px}
   .shiftbox{background:var(--card2);border-radius:10px;padding:10px;margin-bottom:10px}
   #calShift .shiftbox{margin:10px 0 0;border:1px solid var(--accent)}
+  .calhead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+  .calhead h2{margin:0}
+  .calhead button{flex:none;border:1px solid var(--line)}
+  #shareView{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;gap:10px}
+  #shareView img{max-width:100%;max-height:75vh;border-radius:10px;background:#fff}
+  #shareView .muted{color:#ddd;text-align:center}
   /* 支払い(月〜土の分を翌週の土曜に受け取る) */
   .cal .cd{position:relative}
   .cal .paymk{position:absolute;top:1px;right:3px;font-size:11px;font-weight:800;color:var(--warn)}
@@ -271,7 +277,7 @@
     </div>
     <div class="muted" id="stKm" style="margin:-6px 0 14px;text-align:center"></div>
     <div class="card" id="calCard">
-      <h2 id="calTitle"></h2>
+      <div class="calhead"><h2 id="calTitle"></h2><button class="btn small" id="calShare">📤 共有</button></div>
       <div class="cal" id="cal"></div>
       <div id="calShift"></div><!-- 今日以降の日をタップした時のシフトのボタン(カレンダーのすぐ下) -->
       <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span><span style="color:var(--warn);font-weight:800">¥</span> 支払日</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
@@ -1066,6 +1072,82 @@
   $("mNext").onclick = () => { viewMonth.m++; if(viewMonth.m>11){viewMonth.m=0;viewMonth.y++;} selDay=null; renderLog(); };
 
   // その月のカレンダー:送迎した日に丸(日当8,000円=●、4,000円=◐)、今日(朝6時までは前の日)は赤枠、選んだ日は青
+  // ---------- シフトを画像で共有(家族に見せる用) ----------
+  // 見ている月のシフト(今日以降だけ)を白い背景の画像にして、iPhone の共有画面を開く。金額・名前・送迎の丸は載せない
+  function drawShiftImage(){
+    const y=viewMonth.y, m=viewMonth.m, today=bizDate();
+    const first=new Date(y,m,1).getDay(), n=new Date(y,m+1,0).getDate();
+    const W=1080, P=48, CW=Math.floor((W-P*2)/7), CH=118, GAP=8;
+    const rows=Math.ceil((first+n)/7);
+    const items=[];
+    for(let d=1; d<=n; d++){
+      const key=`${y}-${pad(m+1)}-${pad(d)}`;
+      if(key>=today && SHIFT_LABEL[data.shifts[key]]) items.push({key,d,w:(first+d-1)%7,v:data.shifts[key]});
+    }
+    const listTop = P+80+50+rows*CH+80;
+    const H = listTop + Math.max(1,items.length)*58 + P;
+    const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+    const c=cv.getContext("2d");
+    const F=(sz,b)=>`${b?"bold ":""}${sz}px -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif`;
+    const YEL="#fbefa0", BASE="#f1f3f6", EDGE="#d9c25a";
+    c.fillStyle="#ffffff"; c.fillRect(0,0,W,H);
+    c.fillStyle="#111"; c.font=F(56,true); c.textBaseline="top";
+    c.fillText(`${y}年${m+1}月のシフト`, P, P);
+    const gy=P+80;
+    WD.forEach((w,i)=>{ c.fillStyle=i===0?"#dc2626":i===6?"#2563eb":"#555"; c.font=F(32,true); c.textAlign="center"; c.fillText(w, P+i*CW+CW/2, gy); });
+    const cells={};
+    const rr=(x,y0,w,h,r)=>{ c.beginPath(); c.moveTo(x+r,y0); c.arcTo(x+w,y0,x+w,y0+h,r); c.arcTo(x+w,y0+h,x,y0+h,r); c.arcTo(x,y0+h,x,y0,r); c.arcTo(x,y0,x+w,y0,r); c.closePath(); };
+    for(let d=1; d<=n; d++){
+      const key=`${y}-${pad(m+1)}-${pad(d)}`, i=first+d-1, w=i%7;
+      const x=P+w*CW+GAP/2, yy=gy+50+Math.floor(i/7)*CH+GAP/2, cw=CW-GAP, ch=CH-GAP;
+      const v = key>=today ? data.shifts[key] : null;
+      c.save(); rr(x,yy,cw,ch,14); c.clip();
+      c.fillStyle=BASE; c.fillRect(x,yy,cw,ch);
+      c.fillStyle=YEL;
+      if(v==="both") c.fillRect(x,yy,cw,ch);
+      else if(v==="go") c.fillRect(x,yy,cw/2,ch);
+      else if(v==="back") c.fillRect(x+cw/2,yy,cw/2,ch);
+      c.restore();
+      rr(x,yy,cw,ch,14); c.lineWidth = key===today?5:2; c.strokeStyle = key===today?"#dc2626":(SHIFT_LABEL[v]?EDGE:"#e3e6ea"); c.stroke();
+      c.fillStyle=w===0?"#dc2626":w===6?"#2563eb":"#111"; c.font=F(36,true); c.textAlign="center"; c.fillText(String(d), x+cw/2, yy+14);
+      cells[key]={x,y:yy,w:cw,h:ch};
+    }
+    // 色の説明
+    let lx=P; const ly=gy+50+rows*CH+20; c.textAlign="left"; c.font=F(28);
+    [["both","行き・帰り"],["go","行きだけ"],["back","帰りだけ"]].forEach(([v,t])=>{
+      c.fillStyle=BASE; c.fillRect(lx,ly,36,36); c.fillStyle=YEL;
+      if(v==="both") c.fillRect(lx,ly,36,36); else if(v==="go") c.fillRect(lx,ly,18,36); else c.fillRect(lx+18,ly,18,36);
+      c.strokeStyle=EDGE; c.lineWidth=2; c.strokeRect(lx,ly,36,36);
+      c.fillStyle="#333"; c.fillText(t, lx+46, ly+2); lx+=46+c.measureText(t).width+40;
+    });
+    // 文字の一覧
+    const lines = items.length ? items.map(it=>`${it.d}日(${WD[it.w]})  ${SHIFT_LABEL[it.v]}`) : ["今日からあとのシフトはまだないで"];
+    c.font=F(40,true); c.fillStyle="#111";
+    lines.forEach((t,k)=>c.fillText(t, P, listTop+k*58));
+    return {canvas:cv, lines, cells, count:items.length};
+  }
+  function showShareView(url){
+    const v=document.createElement("div"); v.id="shareView";
+    v.innerHTML=`<img alt="シフト" src="${url}"><div class="muted">画像を長押しして保存してから、LINE などで送ってな</div><button class="btn" id="shareClose" style="max-width:240px">閉じる</button>`;
+    document.body.appendChild(v);
+    $("shareClose").onclick=()=>v.remove();
+  }
+  $("calShare").onclick = async () => {
+    const r=drawShiftImage();
+    window._lastShiftShare={lines:r.lines, cells:r.cells, count:r.count, w:r.canvas.width, h:r.canvas.height}; // 確認用
+    if(!r.count){ toast("この月の今日からあとのシフトはまだないで"); return; }
+    const url=r.canvas.toDataURL("image/png");
+    const blob=await new Promise(res=>r.canvas.toBlob(res,"image/png"));
+    const file=blob ? new File([blob], `シフト_${monthKey()}.png`, {type:"image/png"}) : null;
+    try{
+      if(file && navigator.canShare && navigator.canShare({files:[file]}) && navigator.share){
+        await navigator.share({files:[file], title:`${viewMonth.m+1}月のシフト`});
+        return;
+      }
+    }catch(e){ if(e && e.name==="AbortError") return; } // 共有画面を閉じただけなら何もしない
+    showShareView(url); // 共有画面が使えない時は画像を大きく出す
+  };
+
   // ---------- 支払い ----------
   // 月〜土に送迎した分の日当を、翌週の土曜に受け取る。日曜は送迎なし(もしあれば次の週の分に入れる)
   const addDays=(d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
