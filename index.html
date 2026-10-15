@@ -126,11 +126,17 @@
   .pay .wage button.on{background:var(--ok);border-color:var(--ok);color:#06210f}
   .pay .wage button:disabled{opacity:.6}
   .pay .net{font-weight:800;font-size:16px}
+  .pay .exp{display:flex;justify-content:space-between;gap:8px;padding:3px 0;cursor:pointer}
+  .pay .exp .muted{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .locked .pay .exp{cursor:default}
+  .pay .expadd{margin:4px 0 2px;border:1px dashed var(--line);background:transparent;color:var(--sub);border-radius:8px;padding:5px 10px;font-family:inherit;font-size:13px;font-weight:700}
+  .pay .expadd:disabled{opacity:.5}
   .copybtn{display:block;width:100%;margin-top:8px;border:1px solid var(--line);background:var(--card);color:var(--text);
     border-radius:9px;padding:9px;font-size:14px;font-weight:700;font-family:inherit}
   .lockbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
   .locked .trip{cursor:default}
   .stats.money .n{font-size:18px}
+  .stats.four{gap:6px}.stats.four .stat{padding:9px 3px;min-width:0}.stats.four .n{font-size:15px;letter-spacing:-.3px}.stats.four .l{font-size:11px;white-space:nowrap}
   .pay .work{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
   .pay .hourly{font-weight:800;font-size:16px;color:var(--ok)}
   .pay .work button{flex:none;border:1px solid var(--line);background:var(--card)}
@@ -270,9 +276,10 @@
       <div class="stat"><div class="n" id="stGo">0</div><div class="l">行き 延べ人数</div></div>
       <div class="stat"><div class="n" id="stBack">0</div><div class="l">帰り 延べ人数</div></div>
     </div>
-    <div class="stats money">
+    <div class="stats money four">
       <div class="stat"><div class="n" id="stWage">0</div><div class="l">日当 合計</div></div>
-      <div class="stat"><div class="n" id="stGas">0</div><div class="l">ガソリン代 合計</div></div>
+      <div class="stat"><div class="n" id="stGas">0</div><div class="l">ガソリン代</div></div>
+      <div class="stat"><div class="n" id="stExp">0</div><div class="l">経費 合計</div></div>
       <div class="stat"><div class="n" id="stNet" style="color:var(--ok)">0</div><div class="l">差し引き 合計</div></div>
     </div>
     <div class="stats money">
@@ -316,6 +323,21 @@
         <button class="btn primary" id="lSave">保存</button>
       </div>
       <button class="btn danger" id="lDel" style="display:none">この記録を削除</button>
+    </div>
+
+    <div class="card" id="exForm" style="display:none">
+      <h2 id="exTitle">経費を追加</h2>
+      <input type="hidden" id="exDay"><input type="hidden" id="exId">
+      <label>金額(円)</label>
+      <input id="exAmt" type="number" min="0" step="1" inputmode="numeric" placeholder="例:500">
+      <label>中身</label>
+      <input id="exWhat" placeholder="例:駐車場・洗車・飲み物" autocomplete="off">
+      <p class="hint">経費は差し引き日当から引く(時給も下がる)。店からもらう支払いの額は変わらへん。</p>
+      <div class="row">
+        <button class="btn" id="exCancel">やめる</button>
+        <button class="btn primary" id="exSave">保存</button>
+      </div>
+      <button class="btn danger" id="exDel" style="display:none">この経費を削除</button>
     </div>
 
     <div class="card" id="hmForm" style="display:none">
@@ -1206,7 +1228,7 @@
     const dd=data.days[date]||{wage:8000, gas:+data.gasPrice||0, eff:+data.fuelEff||10};
     const km=data.logs.filter(l=>l.date===date).reduce((s,l)=>s+(+l.km||0),0);
     const gas=Math.round(km/(+dd.eff||10)*(+dd.gas||0));
-    return {wage:+dd.wage||0, net:(+dd.wage||0)-gas};
+    return {wage:+dd.wage||0, net:(+dd.wage||0)-gas-expOf(dd)};
   }
   // 支払日ごとのまとまり {pay, mon, sat, days[], wage, net} を支払日の古い順で
   function payGroups(){
@@ -1228,7 +1250,7 @@
     else{
       const g=up[0], going=g.sat>=today;
       h=`<div><span class="big">${mdw(g.pay)} ${yen(g.wage)}</span>${data.paid[g.pay]?' <span class="badge b-ok">受け取り済み</span>':""}</div>
-        <div class="muted">${md(g.mon)}〜${md(g.sat)} の${g.days.length}日分${going?"(途中)":""}・手取り ${yen(g.net)}(ガソリン代 ${yen(g.wage-g.net)} 引き)</div>`;
+        <div class="muted">${md(g.mon)}〜${md(g.sat)} の${g.days.length}日分${going?"(途中)":""}・手取り ${yen(g.net)}(ガソリン代・経費 ${yen(g.wage-g.net)} 引き)</div>`;
       if(up[1]){ const g2=up[1]; h+=`<div class="muted" style="margin-top:4px">その次 ${mdw(g2.pay)} ${yen(g2.wage)}(${md(g2.mon)}〜${g2.sat>=today?" 途中":md(g2.sat)} ${g2.days.length}日分)</div>`; }
     }
     const late=groups.filter(g=>g.pay<today && !data.paid[g.pay]);
@@ -1357,8 +1379,11 @@
     const dd=ensureDay(date);
     const km=logs.filter(l=>l.date===date).reduce((s,l)=>s+(+l.km||0),0);
     const gas=Math.round(km/(+dd.eff||10)*(+dd.gas||0));
-    return {wage:+dd.wage||0, km, gas, net:(+dd.wage||0)-gas, gasPrice:+dd.gas||0, eff:+dd.eff||10};
+    const exp=expOf(dd);
+    return {wage:+dd.wage||0, km, gas, exp, exps:Array.isArray(dd.exps)?dd.exps:[], net:(+dd.wage||0)-gas-exp, gasPrice:+dd.gas||0, eff:+dd.eff||10};
   }
+  // その日の経費の合計(days[日付].exps = [{id, amt, what}])
+  function expOf(dd){ return (dd && Array.isArray(dd.exps) ? dd.exps : []).reduce((s,e)=>s+(+e.amt||0),0); }
 
   // その日の働いた時間:出発 〜 「帰宅した」を押した時刻(days[日付].homeAt)
   // 出発は ①「出発した」を押した(または手で直した)時刻 startAt → ②なければ、その日に最初に「ナビ開始」を押した時刻
@@ -1389,7 +1414,7 @@
       if(!confirm("ロックを外す?(記録の修正・削除ができるようになる)")) return;
       data.locked=false;
     }else{
-      data.locked=true; $("lForm").style.display="none"; $("hmForm").style.display="none";
+      data.locked=true; $("lForm").style.display="none"; $("hmForm").style.display="none"; $("exForm").style.display="none";
     }
     save(); renderLog();
   };
@@ -1410,8 +1435,8 @@
     $("stDays").textContent=days.length;
     $("stGo").textContent=logs.filter(l=>l.dir==="go").reduce((s,l)=>s+l.names.length,0);
     $("stBack").textContent=logs.filter(l=>l.dir==="back").reduce((s,l)=>s+l.names.length,0);
-    const tot=days.map(d=>dayMoney(d,logs)).reduce((a,m)=>({wage:a.wage+m.wage,gas:a.gas+m.gas,net:a.net+m.net,km:a.km+m.km}),{wage:0,gas:0,net:0,km:0});
-    $("stWage").textContent=yen(tot.wage); $("stGas").textContent=yen(tot.gas); $("stNet").textContent=yen(tot.net);
+    const tot=days.map(d=>dayMoney(d,logs)).reduce((a,m)=>({wage:a.wage+m.wage,gas:a.gas+m.gas,exp:a.exp+m.exp,net:a.net+m.net,km:a.km+m.km}),{wage:0,gas:0,exp:0,net:0,km:0});
+    $("stWage").textContent=yen(tot.wage); $("stGas").textContent=yen(tot.gas); $("stExp").textContent=yen(tot.exp); $("stNet").textContent=yen(tot.net);
     $("stKm").textContent=`走行距離 合計 ${tot.km.toFixed(1)}km`;
     // 平均時給:働いた時間が出た日だけで、差し引き合計 ÷ 働いた時間の合計
     const wk=days.map(d=>({w:workOf(d), m:dayMoney(d,logs)})).filter(x=>x.w.min)
@@ -1453,6 +1478,8 @@
       const pay=`<div class="pay">
           <div class="wage"><span class="muted">日当</span>${WAGES.map(v=>`<button data-day="${day}" data-wage="${v}" class="${m.wage===v?"on":""}" ${locked?"disabled":""}>${v.toLocaleString()}円</button>`).join("")}${data.days[day]&&data.days[day].wageAuto&&!data.days[day].wageManual?'<span class="muted" style="font-size:12px">自動</span>':""}</div>
           <div>走行距離 ${m.km.toFixed(1)}km / ガソリン代 ${yen(m.gas)} <span class="muted">(${m.gasPrice}円/L・${m.eff}km/L)</span></div>
+          ${m.exps.map(e=>`<div class="exp" data-exp="${day}|${e.id}"><span class="muted">経費 ${esc(e.what||"(中身なし)")}</span><b>${yen(+e.amt||0)}</b></div>`).join("")}
+          <button class="expadd" data-expadd="${day}" ${locked?"disabled":""}>＋ 経費</button>
           <div class="net">差し引き日当 ${yen(m.net)}</div>
           <div class="work">
             <div><div class="muted">出発 ${wk.start!=null?hm(new Date(wk.start))+(wk.src==="nav"?"(ナビ)":""):"—"} → 帰宅 ${wk.home!=null?hm(new Date(wk.home)):"—"}</div>
@@ -1474,6 +1501,8 @@
     });
     $("logList").querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>copyReport(b.dataset.copy));
     $("logList").querySelectorAll("[data-home]").forEach(b=>b.onclick=()=>openHomeForm(b.dataset.home));
+    $("logList").querySelectorAll("[data-expadd]").forEach(b=>b.onclick=()=>openExpForm(b.dataset.expadd));
+    $("logList").querySelectorAll("[data-exp]").forEach(el=>el.onclick=()=>{ const [d,id]=el.dataset.exp.split("|"); openExpForm(d,id); });
     $("logList").querySelectorAll("[data-wage]").forEach(b=>b.onclick=()=>{
       if(data.locked) return;
       const dd=ensureDay(b.dataset.day); dd.wage=+b.dataset.wage; dd.wageManual=true; save(); renderLog(); // 手で決めた日は以後自動で変えない
@@ -1605,6 +1634,40 @@
     $("hmForm").style.display="none"; renderLog(); renderHomeState(); toast("時刻を保存したで");
   };
 
+  // ---------- 経費 ----------
+  // 日ごとに何件でも入れられる(days[日付].exps)。差し引き日当(=時給)から引く。支払い(店からもらう額)は変えない
+  function openExpForm(day, id){
+    if(data.locked){ toast("ロック中やで"); return; }
+    const dd=data.days[day]||{}, d=parseYmd(day);
+    const e=id ? (dd.exps||[]).find(x=>x.id===id) : null;
+    $("exDay").value=day; $("exId").value=e?e.id:"";
+    $("exTitle").textContent=`${d.getMonth()+1}月${d.getDate()}日の経費${e?"を直す":"を追加"}`;
+    $("exAmt").value=e?e.amt:""; $("exWhat").value=e&&e.what?e.what:"";
+    $("exDel").style.display=e?"block":"none";
+    $("lForm").style.display="none"; $("hmForm").style.display="none";
+    $("exForm").style.display="block";
+    $("exForm").scrollIntoView({behavior:"smooth",block:"start"});
+  }
+  $("exCancel").onclick=()=>{ $("exForm").style.display="none"; };
+  $("exSave").onclick=()=>{
+    if(data.locked){ toast("ロック中やで"); return; }
+    const day=$("exDay").value; if(!day) return;
+    const amt=Math.round(+$("exAmt").value);
+    if(!isFinite(amt) || amt<=0){ toast("金額を入れてな"); return; }
+    const what=$("exWhat").value.trim();
+    const dd=ensureDay(day); if(!Array.isArray(dd.exps)) dd.exps=[];
+    const id=$("exId").value, e=id ? dd.exps.find(x=>x.id===id) : null;
+    if(e){ e.amt=amt; e.what=what; } else dd.exps.push({id:uid(), amt, what});
+    save(); $("exForm").style.display="none"; renderLog(); renderHomeState(); toast(`経費 ${yen(amt)} を保存したで`);
+  };
+  $("exDel").onclick=()=>{
+    if(data.locked){ toast("ロック中やで"); return; }
+    const day=$("exDay").value, id=$("exId").value, dd=data.days[day];
+    if(!dd || !Array.isArray(dd.exps) || !confirm("この経費を削除する?")) return;
+    dd.exps=dd.exps.filter(x=>x.id!==id); if(!dd.exps.length) delete dd.exps;
+    save(); $("exForm").style.display="none"; renderLog(); renderHomeState(); toast("経費を削除したで");
+  };
+
   // ---------- CSV ----------
   function download(name, text, type){
     const blob=new Blob([text],{type});
@@ -1618,18 +1681,18 @@
     const logs=monthLogs();
     if(!logs.length){ toast("この月の記録はないで"); return; }
     const days=[...new Set(logs.map(l=>l.date))];
-    const rows=[["■日ごとの集計"],["日付","曜日","行き人数","帰り人数","走行距離(km)","日当","ガソリン単価(円/L)","燃費(km/L)","ガソリン代","差し引き日当","出発時刻","帰宅時刻","働いた時間","時給"]];
-    const tot={wage:0,gas:0,net:0,km:0,wmin:0,wnet:0};
+    const rows=[["■日ごとの集計"],["日付","曜日","行き人数","帰り人数","走行距離(km)","日当","ガソリン単価(円/L)","燃費(km/L)","ガソリン代","経費","経費の中身","差し引き日当","出発時刻","帰宅時刻","働いた時間","時給"]];
+    const tot={wage:0,gas:0,exp:0,net:0,km:0,wmin:0,wnet:0};
     const hmm = m => Math.floor(m/60)+":"+pad(m%60);
     days.forEach(day=>{
       const d=parseYmd(day), m=dayMoney(day,logs), w=workOf(day);
       const cnt=dir=>logs.filter(l=>l.date===day&&l.dir===dir).reduce((s,l)=>s+l.names.length,0);
-      rows.push([day, WD[d.getDay()], cnt("go"), cnt("back"), m.km.toFixed(1), m.wage, m.gasPrice, m.eff, m.gas, m.net,
+      rows.push([day, WD[d.getDay()], cnt("go"), cnt("back"), m.km.toFixed(1), m.wage, m.gasPrice, m.eff, m.gas, m.exp, m.exps.map(e=>(e.what||"")+" "+(+e.amt||0)).join("・"), m.net,
         w.start!=null?hm(new Date(w.start)):"", w.home!=null?hm(new Date(w.home)):"", w.min?hmm(w.min):"", w.min?hourlyOf(m.net,w.min):""]);
-      tot.wage+=m.wage; tot.gas+=m.gas; tot.net+=m.net; tot.km+=m.km;
+      tot.wage+=m.wage; tot.gas+=m.gas; tot.exp+=m.exp; tot.net+=m.net; tot.km+=m.km;
       if(w.min){ tot.wmin+=w.min; tot.wnet+=m.net; }
     });
-    rows.push(["合計","","","",tot.km.toFixed(1),tot.wage,"","",tot.gas,tot.net,"","",tot.wmin?hmm(tot.wmin):"",tot.wmin?hourlyOf(tot.wnet,tot.wmin):""]);
+    rows.push(["合計","","","",tot.km.toFixed(1),tot.wage,"","",tot.gas,tot.exp,"",tot.net,"","",tot.wmin?hmm(tot.wmin):"",tot.wmin?hourlyOf(tot.wnet,tot.wmin):""]);
     if(tot.wmin) rows.push(["(合計の時給は、働いた時間が出た日だけの 差し引き日当 ÷ 働いた時間)"]);
     rows.push([]);
     rows.push(["■送迎の明細"],["日付","曜日","区分","人数","名前","走行距離(km)","記録時刻","備考"]);
