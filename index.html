@@ -121,7 +121,7 @@
   .sun{color:var(--ng)}.sat{color:var(--accent)}
   .seg.sm{margin:0 0 14px}.seg.sm button{padding:9px 0;font-size:14px}
   .pay{margin-top:8px;padding:10px;border-radius:10px;background:var(--card2);font-size:14px}
-  .pay .wage{display:grid;grid-template-columns:auto repeat(4,minmax(0,1fr));gap:4px;align-items:center;margin-bottom:6px}
+  .pay .wage{display:grid;grid-template-columns:auto repeat(5,minmax(0,1fr));gap:4px;align-items:center;margin-bottom:6px}
   .pay .wage .wl{display:flex;flex-direction:column;line-height:1.15;padding-right:2px}
   .pay .wage .wl small{font-size:10px}
   .pay .wage button{border:1px solid var(--line);background:var(--card);color:var(--sub);border-radius:8px;padding:6px 0;font-weight:700;font-family:inherit;font-size:13px;white-space:nowrap;letter-spacing:-.3px}
@@ -197,11 +197,13 @@
   .cal .dot.half{background:linear-gradient(90deg,var(--accent) 50%,transparent 50%)}
   .cal .dot.small{width:10px;height:10px;margin:5px}
   .cal .dot.q3{background:conic-gradient(var(--accent) 0 75%,transparent 0)}
+  .cal .dot.dbl{background:radial-gradient(circle,var(--accent) 0 40%,transparent 42%)}
   .cal-legend{display:flex;gap:16px;align-items:center;margin-top:10px;font-size:13px;color:var(--sub)}
   .cal-legend .dot{display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--accent);vertical-align:-2px;margin-right:4px}
   .cal-legend .dot.half{background:linear-gradient(90deg,var(--accent) 50%,transparent 50%)}
   .cal-legend .dot.small{width:8px;height:8px;vertical-align:0}
   .cal-legend .dot.q3{background:conic-gradient(var(--accent) 0 75%,transparent 0)}
+  .cal-legend .dot.dbl{background:radial-gradient(circle,var(--accent) 0 34%,transparent 38%)}
 </style>
 </head>
 <body>
@@ -299,7 +301,7 @@
       <div class="muted" id="shareState" style="margin:-6px 0 8px;font-size:12px"></div>
       <div class="cal" id="cal"></div>
       <div id="calShift"></div><!-- 今日以降の日をタップした時のシフトのボタン(カレンダーのすぐ下) -->
-      <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot q3"></span>5,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="dot small"></span>2,500円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span><span style="color:var(--warn);font-weight:800">¥</span> 支払日</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
+      <div class="cal-legend"><span><span class="dot"></span>8,000円</span><span><span class="dot dbl"></span>6,500円</span><span><span class="dot q3"></span>5,000円</span><span><span class="dot half"></span>4,000円</span><span><span class="dot small"></span>2,500円</span><span><span class="sh both"></span>行き帰り</span><span><span class="sh go"></span>行きだけ</span><span><span class="sh back"></span>帰りだけ</span><span><span style="color:var(--warn);font-weight:800">¥</span> 支払日</span><span class="muted">日をタップでその日だけ・今日以降はシフトを入れられる</span></div>
       <div class="paylist" id="payList"></div>
     </div>
     <div class="row" style="margin-bottom:14px">
@@ -566,7 +568,7 @@
     const [h,m] = effArrive().split(":").map(Number);
     const d = new Date(); d.setHours(h,m,0,0); return d;
   }
-  const WAGES=[8000,4000,2500,5000];   // 2,500円(2026-10-21)・5,000円(2026-10-22)は例外(本人の指定)。自動では選ばず、手で押した時だけ
+  const WAGES=[8000,4000,2500,5000,6500];   // 2,500円(2026-10-21)・5,000円(2026-10-22)・6,500円(2026-10-22)は例外(本人の指定)。自動では選ばず、手で押した時だけ
   // auto=true:新しく作る日は日当を自動で決める対象(wageAuto)にする。古い記録の日を後から作る時は auto=false(今まで通り)
   function ensureDay(date, auto=true){
     if(!data.days[date]){
@@ -1372,7 +1374,7 @@
     for(let i=0;i<first;i++) h+='<div class="cd blank"></div>';
     for(let d=1; d<=n; d++){
       const key=`${y}-${pad(m+1)}-${pad(d)}`, w=(first+d-1)%7;
-      const mark = has.has(key) ? `<span class="dot ${(w=>w>=8000?"":w>=5000?"q3":w>=4000?"half":"small")(dayMoney(key,logs).wage)}"></span>` : "";
+      const mark = has.has(key) ? `<span class="dot ${(w=>w>=8000?"":w>=6500?"dbl":w>=5000?"q3":w>=4000?"half":"small")(dayMoney(key,logs).wage)}"></span>` : "";
       const sh = key>=today && SHIFT_LABEL[SH[key]] ? "sh-"+SH[key] : ""; // シフトの色は今日以降だけ
       const pg=payDays[key], pm = pg ? `<span class="paymk ${data.paid[key]?"done":""}">¥</span>` : "";
       h+=`<button class="cd ${w===0?"sun":w===6?"sat":""} ${key===today?"today":""} ${key===selDay?"sel":""} ${sh}" data-cal="${key}"><span class="num">${d}</span>${mark}${pm}</button>`;
@@ -1483,7 +1485,7 @@
           <span class="muted">${l.manual?"手入力":(l.at?hm(new Date(l.at)):"")}</span>
         </div>`).join("");
       const pay=`<div class="pay">
-          <div class="wage"><span class="muted wl">日当${data.days[day]&&data.days[day].wageAuto&&!data.days[day].wageManual?"<small>自動</small>":""}</span>${WAGES.map(v=>`<button data-day="${day}" data-wage="${v}" class="${m.wage===v?"on":""}" ${locked?"disabled":""}>${v.toLocaleString()}円</button>`).join("")}</div>
+          <div class="wage"><span class="muted wl">日当(円)${data.days[day]&&data.days[day].wageAuto&&!data.days[day].wageManual?"<small>自動</small>":""}</span>${WAGES.map(v=>`<button data-day="${day}" data-wage="${v}" class="${m.wage===v?"on":""}" ${locked?"disabled":""}>${v.toLocaleString()}</button>`).join("")}</div>
           <div>走行距離 ${m.km.toFixed(1)}km / ガソリン代 ${yen(m.gas)} <span class="muted">(${m.gasPrice}円/L・${m.eff}km/L)</span></div>
           ${m.exps.map(e=>`<div class="exp" data-exp="${day}|${e.id}"><span class="muted">経費 ${esc(e.what||"(中身なし)")}</span><b>${yen(+e.amt||0)}</b></div>`).join("")}
           <button class="expadd" data-expadd="${day}" ${locked?"disabled":""}>＋ 経費</button>
