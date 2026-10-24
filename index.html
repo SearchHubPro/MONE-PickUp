@@ -1084,21 +1084,40 @@
   // ---------- 一度家に帰る/店に戻る ----------
   // 行きと帰りの間に店→家・家→店を走る時。ナビ(今いる所から、下道)を開き、店⇔家の道のりを「移動」の記録に残す(走行距離・ガソリン代に足す)。
   // 報告コピー・日当の自動・人数には数えない。家にいる時間は働いた時間から引かない(本人の指定)
-  async function moveTrip(to){
+  // 2026-10-24:押してから道のりの計算を待ってナビを開くと、iPhone が Googleマップのアプリに渡さず、ウェブ版の「アプリでルートを検索しませんか?」が毎回出た。
+  //   店⇔家の道のりは毎回同じなので前もって計算して覚えておき(data.moveKm)、押したらすぐ記録して「ナビ開始」と同じ早さでマップを開く。
+  //   まだ覚えてない時は直線×1.4 で記録し、あとで計算が返ってきたら正しい距離に直す。
+  const moveSig = () => `${data.store.lat},${data.store.lng}>${data.home.lat},${data.home.lng}`;
+  const moveCached = to => { const m=data.moveKm; return m && m.sig===moveSig() && isFinite(+m[to]) && +m[to]>0 ? +m[to] : null; };
+  let moveWarming=null;
+  function warmMoveKm(){   // 店⇔家の道のりを前もって計算して覚える(設定を保存した時・アプリを開いた時)
+    if(moveWarming) return moveWarming;
+    const key=getKey();
+    if(!key || !hasLL(data.home) || !hasLL(data.store) || (moveCached("home")!=null && moveCached("store")!=null)) return Promise.resolve();
+    const sig=moveSig();
+    moveWarming=(async()=>{
+      try{
+        const [h,st]=await Promise.all([computeRoute(key, data.store, data.home, []), computeRoute(key, data.home, data.store, [])]);
+        if(sig===moveSig() && h && st && h.km>0 && st.km>0){ data.moveKm={sig, home:Math.round(h.km*10)/10, store:Math.round(st.km*10)/10}; save(); }
+      }catch(e){}
+      moveWarming=null;
+    })();
+    return moveWarming;
+  }
+  function moveTrip(to){ // to: "home"|"store"
     if(!hasLL(data.home)){ toast("先に「設定」で自宅の位置を登録してな"); return; }
     if(!hasLL(data.store)){ toast("先に「設定」でお店の位置を登録してな"); return; }
     const from = to==="home" ? data.store : data.home, dest = to==="home" ? data.home : data.store;
-    const btn = to==="home" ? $("btnMvHome") : $("btnMvStore");
-    btn.disabled=true; toast("道のりを計算中…");
-    let km=null; const key=getKey();
-    if(key){ try{ km=(await computeRoute(key, from, dest, [])).km; }catch(e){ km=null; } }
-    if(km==null) km=dist(from,dest)*1.4; // キーなし・失敗は直線距離の1.4倍を目安に
+    const cached=moveCached(to);
+    const km = cached!=null ? cached : Math.round(dist(from,dest)*1.4*10)/10; // 覚えてない時は直線距離の1.4倍を目安に
     const date=bizDate(); ensureDay(date);
-    data.logs.push({id:uid(), date, dir:"move", move:to, names:[], km:Math.round(km*10)/10, at:new Date().toISOString()});
-    save(); btn.disabled=false;
-    toast(`${MOVE_LABEL[to]} ${(Math.round(km*10)/10).toFixed(1)}km を記録したで`);
+    const log={id:uid(), date, dir:"move", move:to, names:[], km, at:new Date().toISOString()};
+    data.logs.push(log); save();
+    toast(`${MOVE_LABEL[to]} ${km.toFixed(1)}km を記録したで`);
     const url="https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination="+encodeURIComponent(q(dest));
-    setTimeout(()=>{ location.href=url; }, 700);
+    setTimeout(()=>{ location.href=url; }, 700);   // 「ナビ開始」と同じ(押してすぐ)
+    if(cached==null) warmMoveKm().then(()=>{ const c=moveCached(to), l=data.logs.find(x=>x.id===log.id);
+      if(c!=null && l){ l.km=c; save(); if($("v-log").classList.contains("on")) renderLog(); } });
   }
   $("btnMvHome").onclick = () => moveTrip("home");
   $("btnMvStore").onclick = () => moveTrip("store");
@@ -1776,7 +1795,7 @@
     setKey($("sKey").value.trim());
     const ghOld=getGhKey(), ghNew=$("sGhKey").value.replace(/\s/g,"");
     setGhKey(ghNew);
-    if(save()){ renderKeyState(); renderGhState(); renderAll(); toast("設定を保存したで"); }
+    if(save()){ renderKeyState(); renderGhState(); renderAll(); toast("設定を保存したで"); warmMoveKm(); }
     if(ghNew && ghNew!==ghOld) pushShifts(); // 合い鍵を入れた時に今のシフトを一度保存する
   };
 
@@ -1823,6 +1842,7 @@
     if(isViewer()) loadSharedShifts();
     else if(getGhKey() && data.shiftSync && data.shiftSync.pending) pushShifts();
   }});
+  if(!isViewer()) warmMoveKm();   // 店⇔家の道のりを覚えてなければ前もって計算(一度家に帰る/店に戻るを押してすぐマップを開くため)
   // 夜23時〜朝4時59分にアプリを開いたら、最初から「帰り」にする(開いた時だけ。使っている途中では切り替えない)
   { const h=new Date().getHours(); if(h>=23 || h<5) setMode("back"); }
 })();
