@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16121a">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-title" content="マッサージ送迎">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" href="icon.png">
+<title>マッサージ送迎</title>
+<!--
+  マッサージ店のバイト(受付と施術師の出張送迎)用のアプリ。ラウンジの送迎アプリ(../index.html)とは別のアプリ。
+  2026-11-17 本人と決めたこと:
+  ・行き先(お客さんの家・ホテルなど)の名前を押すと、今いる所から Googleマップのナビを開き、その日に「どこへ行ったか」だけ記録する
+  ・勤務は 19時スタート、終わりはふだん 1時(その日だけ 2時にもできる)。時給は 22時まで 1,220円、22時から 1,550円。経費なし(車は店の)
+  ・給料は 1日〜15日の分がその月の 25日払い、16日〜月末の分が次の月の 10日払い
+  ・シフトの入力・家族に見せる機能はなし
+  ・お客さんの名前・住所はこのファイルに書かない(GitHub で誰でも見られるため)。本人のスマホで「読み込み」してスマホの中だけに置く
+  データはこのスマホのブラウザの中(localStorage の massage.data.v1)だけ。ラウンジの方(sougei.data.v1)とは混ざらない。
+-->
+<style>
+  :root{
+    --bg:#16121a; --card:#211b27; --card2:#2b2433; --line:#3a3144;
+    --text:#f2eef5; --sub:#ab9fb8; --accent:#ff7eb6; --accent-t:#2a0717;
+    --ok:#3ccf8e; --warn:#ffb547; --ng:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
+  /* ラウンジの方と同じ:ヘッダー/中身(ここだけスクロール)/メニュー の3段。iPhone で下のメニューが浮かないように */
+  html,body{height:100%;overflow:hidden}
+  #app{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}
+  #scroller{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  header{flex:none;background:var(--bg);padding:12px 16px 8px;border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:baseline}
+  header h1{font-size:18px;margin:0}
+  #clock{font-variant-numeric:tabular-nums;color:var(--sub);font-size:15px}
+  main{padding:16px 16px 40px;max-width:560px;margin:0 auto}
+  nav{flex:none;display:flex;background:#100c13;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+  nav button{flex:1;background:none;border:0;color:var(--sub);padding:10px 0 12px;font-size:13px;font-family:inherit}
+  nav button.on{color:var(--accent);font-weight:700}
+  nav button span{display:block;font-size:20px;line-height:1.2}
+  .view{display:none}.view.on{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+  .card h2{font-size:15px;margin:0 0 10px;color:var(--sub);font-weight:600}
+  label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px}
+  input,textarea,select{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:10px;padding:12px;font-size:16px;font-family:inherit}
+  input[type=time]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;min-height:50px;text-align:left}
+  input:focus,textarea:focus{outline:2px solid var(--accent);border-color:transparent}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  button.btn{display:block;width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:700;
+    background:var(--card2);color:var(--text);margin-top:10px;font-family:inherit}
+  button.primary{background:var(--accent);color:var(--accent-t)}
+  button.small{display:inline-block;width:auto;padding:8px 12px;font-size:14px;margin:0;font-weight:600}
+  button:disabled{opacity:.45}
+  .danger{color:var(--ng)!important}
+  .muted{color:var(--sub);font-size:13px}
+  .hint{color:var(--sub);font-size:13px;margin:6px 0 0}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;border:1px solid var(--line);background:var(--card2);color:var(--sub);border-radius:10px;padding:11px 0;
+    font-size:15px;font-weight:700;font-family:inherit}
+  .seg button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-t)}
+  .big{font-size:22px;font-weight:800}
+  .pay{color:var(--ok);font-weight:800}
+  /* 行き先 */
+  .place{display:flex;gap:10px;align-items:center;width:100%;text-align:left;background:var(--card2);border:1px solid var(--line);
+    border-radius:12px;padding:12px;margin-top:8px;color:var(--text);font-family:inherit;font-size:16px}
+  .place:active{background:var(--line)}
+  .place .nm{font-weight:800;font-size:17px}
+  .place .ad{color:var(--sub);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .place .go{flex:none;color:var(--accent);font-size:22px}
+  .place.noaddr .go{color:var(--sub)}
+  .place>div{flex:1;min-width:0}
+  .visit{display:flex;justify-content:space-between;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+  .visit:last-child{border-bottom:0}
+  /* 記録 */
+  .month{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .month b{font-size:20px}
+  .stats{display:flex;gap:8px;margin-bottom:14px}
+  .stat{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 4px;text-align:center;min-width:0}
+  .stat .n{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .stat .l{font-size:12px;color:var(--sub)}
+  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .cal .wd{text-align:center;font-size:12px;color:var(--sub)}
+  .cal .wd.sun,.cal .d.sun .num{color:var(--ng)}.cal .wd.sat,.cal .d.sat .num{color:#6fb6ff}
+  .cal .d{position:relative;aspect-ratio:1/1.15;border:1px solid var(--line);border-radius:9px;background:var(--card2);
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:4px;color:var(--text);font-family:inherit;font-size:14px}
+  .cal .d.empty{visibility:hidden}
+  .cal .d.today{border:2px solid var(--ng)}
+  .cal .d.sel{outline:2px solid var(--accent);outline-offset:1px}
+  .cal .d .num{font-weight:700}
+  .cal .d .dot{width:16px;height:16px;border-radius:50%;background:var(--accent);margin-top:3px}
+  .cal .d .dot.late{box-shadow:0 0 0 3px var(--card2),0 0 0 5px var(--accent)}
+  .cal .d .paymk{position:absolute;top:1px;right:4px;color:var(--warn);font-weight:800;font-size:11px}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--sub);margin-top:10px}
+  .legend .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--accent);vertical-align:-1px;margin-right:4px}
+  .legend .dot.late{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--accent);margin-left:3px}
+  .payrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+  .payrow.done{opacity:.6}
+  .badge{display:inline-block;font-size:12px;border-radius:999px;padding:1px 8px;background:#0f3325;color:var(--ok);font-weight:700}
+  .warnline{color:var(--warn);font-size:13px;margin-top:6px}
+  .plist .pl{display:flex;justify-content:space-between;gap:8px;padding:10px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+  .plist .pl:last-child{border-bottom:0}
+  .plist .pl>div{min-width:0}
+  #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;color:#fff;padding:10px 16px;border-radius:12px;
+    font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50;max-width:90%;text-align:center}
+  #toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div id="app">
+<header><h1>マッサージ送迎</h1><span id="clock"></span></header>
+<div id="scroller"><main>
+
+  <!-- ===== 行き先(最初の画面) ===== -->
+  <section class="view on" id="v-go">
+    <div class="card" id="todayCard">
+      <h2 id="todayTitle">今日</h2>
+      <div id="todayState" class="muted"></div>
+      <div class="seg" style="margin-top:8px">
+        <button id="tEnd1" data-end="01:00">1時まで</button>
+        <button id="tEnd2" data-end="02:00">2時まで</button>
+        <button id="tOff">休み</button>
+      </div>
+      <div style="margin-top:10px">今日の給料 <span class="pay big" id="todayPay">—</span></div>
+    </div>
+    <div class="card">
+      <h2>行き先(名前を押すとナビ)</h2>
+      <input id="q" type="search" placeholder="名前・住所でさがす" autocomplete="off">
+      <div id="placeList"></div>
+    </div>
+    <div class="card">
+      <h2>今日行った所</h2>
+      <div id="todayVisits"></div>
+    </div>
+  </section>
+
+  <!-- ===== 記録 ===== -->
+  <section class="view" id="v-log">
+    <div class="card" id="payCard"><h2>次の給料(1〜15日→25日払い、16日〜月末→翌月10日払い)</h2><div id="payNext"></div></div>
+    <div class="month">
+      <button class="btn small" id="mPrev">◀ 前の月</button><b id="mLabel"></b><button class="btn small" id="mNext">次の月 ▶</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n" id="stDays">0</div><div class="l">出勤した日</div></div>
+      <div class="stat"><div class="n" id="stHours">—</div><div class="l">働いた時間</div></div>
+      <div class="stat"><div class="n" id="stPay" style="color:var(--ok)">¥0</div><div class="l">給料 合計</div></div>
+    </div>
+    <div class="card">
+      <div class="cal" id="cal"></div>
+      <div class="legend"><span><span class="dot"></span>出勤(1時まで)</span><span><span class="dot late"></span>2時まで</span><span><span style="color:var(--warn);font-weight:800">¥</span> 給料日</span><span>日をタップでその日を見る・直す</span></div>
+      <div id="payList"></div>
+    </div>
+    <div class="card" id="dayCard" style="display:none">
+      <h2 id="dayTitle"></h2>
+      <div class="seg">
+        <button id="dEnd1" data-end="01:00">1時まで</button>
+        <button id="dEnd2" data-end="02:00">2時まで</button>
+        <button id="dOff">休み</button>
+      </div>
+      <div style="margin-top:10px" id="dayPay"></div>
+      <label>行った所(タップで消す)</label>
+      <div id="dayVisits"></div>
+    </div>
+  </section>
+
+  <!-- ===== 設定 ===== -->
+  <section class="view" id="v-set">
+    <div class="card">
+      <h2>行き先の登録</h2>
+      <div class="plist" id="plist"></div>
+      <button class="btn primary" id="pAdd">＋ 行き先を追加</button>
+    </div>
+    <div class="card" id="pForm" style="display:none">
+      <h2 id="pFormTitle">行き先を追加</h2>
+      <input type="hidden" id="pId">
+      <label>名前</label><input id="pName" autocomplete="off" placeholder="例:山田">
+      <label>住所(ナビの行き先)</label><input id="pAddr" autocomplete="off" placeholder="例:大阪府堺市堺区南瓦町3-1">
+      <label>建物・部屋</label><input id="pBldg" autocomplete="off" placeholder="例:○○マンション106号">
+      <label>メモ</label><input id="pMemo" autocomplete="off">
+      <div class="row"><button class="btn" id="pCancel">やめる</button><button class="btn primary" id="pSave">保存</button></div>
+      <button class="btn danger" id="pDel" style="display:none">この行き先を削除</button>
+    </div>
+    <div class="card">
+      <h2>時給・時間</h2>
+      <div class="row">
+        <div><label>始まり</label><input type="time" id="sStart"></div>
+        <div><label>時給が変わる時刻</label><input type="time" id="sSwitch"></div>
+      </div>
+      <div class="row">
+        <div><label>それまでの時給(円)</label><input type="number" id="sR1" inputmode="numeric"></div>
+        <div><label>それからの時給(円)</label><input type="number" id="sR2" inputmode="numeric"></div>
+      </div>
+      <button class="btn primary" id="sSave">保存</button>
+      <p class="hint">終わりは日ごとに「1時まで/2時まで」で選ぶ。変えた時給は、これから付ける日だけでなく全部の日の計算に使う。</p>
+    </div>
+    <div class="card">
+      <h2>読み込み・バックアップ</h2>
+      <button class="btn" id="bImport">行き先・バックアップを読み込む</button>
+      <input type="file" id="bFile" accept=".json,application/json" style="display:none">
+      <button class="btn" id="bExport">バックアップを書き出す</button>
+      <p class="hint">お客さんの一覧はこのスマホの中だけに置く(GitHub には上げない)。</p>
+    </div>
+  </section>
+</main></div>
+<nav>
+  <button data-v="go" class="on"><span>🚗</span>行き先</button>
+  <button data-v="log"><span>📅</span>記録</button>
+  <button data-v="set"><span>⚙️</span>設定</button>
+</nav>
+</div>
+<div id="toast"></div>
+<script>
+(()=>{
+  "use strict";
+  const $ = id => document.getElementById(id);
+  function fitHeight(){ document.documentElement.style.setProperty("--app-h", window.innerHeight+"px"); }
+  fitHeight();
+  ["resize","orientationchange","pageshow","focus"].forEach(ev=>window.addEventListener(ev,()=>{ fitHeight(); setTimeout(fitHeight,300); }));
+
+  // ---------- 共通 ----------
+  const KEY_DATA = "massage.data.v1";
+  const DAY_CUTOFF = 6;   // 朝6時までは前の日の勤務
+  const WD = ["日","月","火","水","木","金","土"];
+  const pad = n => String(n).padStart(2,"0");
+  const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  function parseYmd(s){ const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); }
+  function bizDate(d=new Date()){ const x=new Date(d); if(x.getHours()<DAY_CUTOFF) x.setDate(x.getDate()-1); return ymd(x); }
+  const yen = n => "¥"+Math.round(n).toLocaleString("ja-JP");
+  const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+  let toastTimer=null;
+  function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("on"),2800); }
+
+  // ---------- 保存 ----------
+  const defaults = () => ({places:[], days:{}, visits:[], paid:{},
+    set:{start:"19:00", switchAt:"22:00", r1:1220, r2:1550}});
+  function load(){
+    try{ const s=localStorage.getItem(KEY_DATA); if(s){ const d=Object.assign(defaults(), JSON.parse(s)); d.set=Object.assign(defaults().set, d.set||{}); return d; } }catch(e){}
+    return defaults();
+  }
+  function save(){ try{ localStorage.setItem(KEY_DATA, JSON.stringify(data)); return true; }catch(e){ toast("保存できへんかった"); return false; } }
+  let data=load();
+  ["places","visits"].forEach(k=>{ if(!Array.isArray(data[k])) data[k]=[]; });
+  ["days","paid"].forEach(k=>{ if(!data[k] || typeof data[k]!=="object") data[k]={}; });
+
+  // ---------- 給料の計算 ----------
+  // 始まり(既定 19:00)〜終わり(1:00 か 2:00、0〜6時は次の日)。時給が変わる時刻(既定 22:00)までは r1、それからは r2
+  const toMin = t => { const m=/^(\d{1,2}):(\d{2})/.exec(t||""); if(!m) return null; let v=+m[1]*60+ +m[2]; if(+m[1]<DAY_CUTOFF) v+=1440; return v; };
+  function dayPay(date){
+    const dd=data.days[date]; if(!dd) return null;
+    const s=toMin(dd.start||data.set.start), e=toMin(dd.end||"01:00"), sw=toMin(data.set.switchAt);
+    if(s==null || e==null || e<=s) return null;
+    const a=Math.max(0, Math.min(e,sw)-s), b=Math.max(0, e-Math.max(s,sw));
+    return {min:e-s, pay:Math.round(a/60*(+data.set.r1||0) + b/60*(+data.set.r2||0))};
+  }
+  const fmtDur = m => `${Math.floor(m/60)}時間${m%60?pad(m%60)+"分":""}`;
+
+  // ---------- 勤務 ----------
+  function setWork(date, end){   // end: "01:00"/"02:00"、null で休み(その日の勤務を消す。行った所の記録は残す)
+    if(end){ data.days[date]=Object.assign(data.days[date]||{}, {end}); }
+    else delete data.days[date];
+    save();
+  }
+
+  // ---------- 行き先(名前を押すとナビ) ----------
+  // 押したらすぐマップを開く(ネットの返事を待たない。待つと iPhone がマップのアプリに渡さず、ウェブ版が開くため)
+  const navUrl = p => "https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination="+encodeURIComponent(p.address);
+  function goPlace(id){
+    const p=data.places.find(x=>x.id===id); if(!p) return;
+    if(!p.address){ toast(`${p.name} は住所が入ってないで(設定で入れてな)`); return; }
+    const date=bizDate();
+    if(!data.days[date]) data.days[date]={end:"01:00"};   // 行き先を押した日は出勤した日にする(終わりは 1時)
+    data.visits.push({id:uid(), date, placeId:p.id, name:p.name, at:new Date().toISOString()});
+    save(); toast(`${p.name} へナビを開くで`);
+    location.href=navUrl(p);   // 先にマップを開いてから画面を描き直す
+    renderAll();
+  }
+  function renderPlaces(){
+    const q=$("q").value.trim();
+    const list=data.places.filter(p=>!q || (p.name+" "+(p.address||"")+" "+(p.building||"")).includes(q));
+    $("placeList").innerHTML = !data.places.length
+      ? '<p class="hint">行き先がまだないで。「設定」で追加するか、一覧のファイルを読み込んでな。</p>'
+      : !list.length ? '<p class="hint">見つからへん</p>'
+      : list.map(p=>`<button class="place ${p.address?"":"noaddr"}" data-go="${p.id}"><div><div class="nm">${esc(p.name)}</div>
+          <div class="ad">${p.address?esc(p.address.replace(/^大阪府/,"")):"住所なし"}${p.building?" ・ "+esc(p.building):""}</div></div><span class="go">➤</span></button>`).join("");
+    $("placeList").querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>goPlace(b.dataset.go));
+  }
+  $("q").oninput=renderPlaces;
+  function visitsHtml(date){
+    const v=data.visits.filter(x=>x.date===date);
+    return v.length ? v.map(x=>`<div class="visit" data-visit="${x.id}"><span>${esc(x.name)}</span><span class="muted">${hm(new Date(x.at))}</span></div>`).join("")
+      : '<p class="hint">まだないで</p>';
+  }
+  function delVisit(id){
+    const v=data.visits.find(x=>x.id===id); if(!v) return;
+    if(!confirm(`${v.name}(${hm(new Date(v.at))})の記録を消す?`)) return;
+    data.visits=data.visits.filter(x=>x.id!==id); save(); renderAll(); toast("消したで");
+  }
+  function renderToday(){
+    const date=bizDate(), d=parseYmd(date), dd=data.days[date], dp=dayPay(date);
+    $("todayTitle").textContent=`今日 ${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;
+    $("todayState").textContent = dd ? `${data.set.start} 〜 ${dd.end==="02:00"?"2時":"1時"}(${fmtDur(dp?dp.min:0)})` : "まだ出勤になってへん(行き先を押すか、1時まで/2時までを押す)";
+    $("tEnd1").classList.toggle("on", !!dd && dd.end!=="02:00");
+    $("tEnd2").classList.toggle("on", !!dd && dd.end==="02:00");
+    $("tOff").classList.toggle("on", !dd);
+    $("todayPay").textContent = dp ? yen(dp.pay) : "—";
+    $("todayVisits").innerHTML=visitsHtml(date);
+    $("todayVisits").querySelectorAll("[data-visit]").forEach(el=>el.onclick=()=>delVisit(el.dataset.visit));
+  }
+  $("tEnd1").onclick=()=>{ setWork(bizDate(),"01:00"); renderAll(); };
+  $("tEnd2").onclick=()=>{ setWork(bizDate(),"02:00"); renderAll(); toast("今日は 2時までにしたで"); };
+  $("tOff").onclick=()=>{ if(data.days[bizDate()] && !confirm("今日を休みにする?(給料に入らなくなる)")) return; setWork(bizDate(),null); renderAll(); };
+
+  // ---------- 給料日 ----------
+  // 1〜15日 → その月の25日払い、16日〜月末 → 次の月の10日払い
+  function payOf(date){
+    const d=parseYmd(date), y=d.getFullYear(), m=d.getMonth();
+    if(d.getDate()<=15) return {pay:ymd(new Date(y,m,25)), from:ymd(new Date(y,m,1)), to:ymd(new Date(y,m,15))};
+    return {pay:ymd(new Date(y,m+1,10)), from:ymd(new Date(y,m,16)), to:ymd(new Date(y,m+1,0))};
+  }
+  function payGroups(){
+    const by={};
+    Object.keys(data.days).sort().forEach(date=>{
+      const p=payOf(date), dp=dayPay(date); if(!dp) return;
+      const g=by[p.pay]||(by[p.pay]={...p, days:0, total:0}); g.days++; g.total+=dp.pay;
+    });
+    return Object.values(by).sort((a,b)=>a.pay.localeCompare(b.pay));
+  }
+  const md = s => { const d=parseYmd(s); return `${d.getMonth()+1}/${d.getDate()}`; };
+  const mdw = s => { const d=parseYmd(s); return `${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`; };
+  function renderPay(groups){
+    const today=bizDate(), up=groups.filter(g=>g.pay>=today);
+    let h;
+    if(!up.length) h='<div class="muted">次の給料はまだないで</div>';
+    else{
+      const g=up[0], going=g.to>=today;
+      h=`<div><span class="big">${mdw(g.pay)} <span class="pay">${yen(g.total)}</span></span>${data.paid[g.pay]?' <span class="badge">受け取り済み</span>':""}</div>
+        <div class="muted">${md(g.from)}〜${md(g.to)} の${g.days}日分${going?"(途中)":""}</div>`;
+      if(up[1]) h+=`<div class="muted" style="margin-top:4px">その次 ${mdw(up[1].pay)} ${yen(up[1].total)}(${md(up[1].from)}〜${md(up[1].to)} ${up[1].days}日分${up[1].to>=today?"・途中":""})</div>`;
+    }
+    const late=groups.filter(g=>g.pay<today && !data.paid[g.pay]);
+    if(late.length) h+=`<div class="warnline">受け取り済みを付けてない給料が${late.length}件(${late.map(g=>md(g.pay)+" "+yen(g.total)).join("・")})</div>`;
+    $("payNext").innerHTML=h;
+    const mk=monthKey(), mine=groups.filter(g=>g.pay.startsWith(mk+"-"));
+    $("payList").innerHTML = mine.length ? '<div class="muted" style="margin-top:10px">この月の給料日</div>'+mine.map(g=>`<div class="payrow ${data.paid[g.pay]?"done":""}">
+        <div><b>${mdw(g.pay)} ${yen(g.total)}</b><div class="muted">${md(g.from)}〜${md(g.to)} ${g.days}日分</div></div>
+        <button class="btn small" data-paid="${g.pay}">${data.paid[g.pay]?"✓ 受け取り済み":"受け取った"}</button></div>`).join("") : "";
+    $("payList").querySelectorAll("[data-paid]").forEach(b=>b.onclick=()=>{ const k=b.dataset.paid; if(data.paid[k]) delete data.paid[k]; else data.paid[k]=true; save(); renderLog(); });
+  }
+
+  // ---------- 記録(カレンダー) ----------
+  let view=(()=>{ const d=parseYmd(bizDate()); return {y:d.getFullYear(), m:d.getMonth()}; })();
+  let selDay=null;
+  const monthKey = () => `${view.y}-${pad(view.m+1)}`;
+  $("mPrev").onclick=()=>{ view.m--; if(view.m<0){view.m=11;view.y--;} selDay=null; renderLog(); };
+  $("mNext").onclick=()=>{ view.m++; if(view.m>11){view.m=0;view.y++;} selDay=null; renderLog(); };
+  function renderLog(){
+    const mk=monthKey();
+    $("mLabel").textContent=`${view.y}年${view.m+1}月`;
+    const days=Object.keys(data.days).filter(d=>d.startsWith(mk+"-")).sort();
+    let min=0, pay=0; days.forEach(d=>{ const p=dayPay(d); if(p){ min+=p.min; pay+=p.pay; } });
+    $("stDays").textContent=days.length; $("stHours").textContent=days.length?fmtDur(min):"—"; $("stPay").textContent=yen(pay);
+    const groups=payGroups(); renderPay(groups);
+    const payDays=new Set(groups.map(g=>g.pay));
+    const first=new Date(view.y,view.m,1), last=new Date(view.y,view.m+1,0).getDate(), today=bizDate();
+    let h=WD.map((w,i)=>`<div class="wd ${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("");
+    for(let i=0;i<first.getDay();i++) h+='<div class="d empty"></div>';
+    for(let n=1;n<=last;n++){
+      const k=`${mk}-${pad(n)}`, w=new Date(view.y,view.m,n).getDay(), dd=data.days[k];
+      h+=`<button class="d ${w===0?"sun":w===6?"sat":""} ${k===today?"today":""} ${k===selDay?"sel":""}" data-cal="${k}"><span class="num">${n}</span>
+        ${dd?`<span class="dot ${dd.end==="02:00"?"late":""}"></span>`:""}${payDays.has(k)?'<span class="paymk">¥</span>':""}</button>`;
+    }
+    $("cal").innerHTML=h;
+    $("cal").querySelectorAll("[data-cal]").forEach(b=>b.onclick=()=>{ selDay = selDay===b.dataset.cal ? null : b.dataset.cal; renderLog(); });
+    renderDay();
+  }
+  function renderDay(){
+    if(!selDay){ $("dayCard").style.display="none"; return; }
+    const d=parseYmd(selDay), dd=data.days[selDay], dp=dayPay(selDay);
+    $("dayCard").style.display="block";
+    $("dayTitle").textContent=`${d.getMonth()+1}月${d.getDate()}日(${WD[d.getDay()]})`;
+    $("dEnd1").classList.toggle("on", !!dd && dd.end!=="02:00");
+    $("dEnd2").classList.toggle("on", !!dd && dd.end==="02:00");
+    $("dOff").classList.toggle("on", !dd);
+    $("dayPay").innerHTML = dp ? `${data.set.start} 〜 ${dd.end==="02:00"?"2時":"1時"}(${fmtDur(dp.min)}) <span class="pay">${yen(dp.pay)}</span><div class="muted">給料日 ${mdw(payOf(selDay).pay)}</div>` : '<span class="muted">休み</span>';
+    $("dayVisits").innerHTML=visitsHtml(selDay);
+    $("dayVisits").querySelectorAll("[data-visit]").forEach(el=>el.onclick=()=>delVisit(el.dataset.visit));
+  }
+  $("dEnd1").onclick=()=>{ setWork(selDay,"01:00"); renderAll(); };
+  $("dEnd2").onclick=()=>{ setWork(selDay,"02:00"); renderAll(); };
+  $("dOff").onclick=()=>{ if(data.days[selDay] && !confirm("この日を休みにする?(給料に入らなくなる)")) return; setWork(selDay,null); renderAll(); };
+
+  // ---------- 設定:行き先 ----------
+  function renderPlist(){
+    $("plist").innerHTML = data.places.length ? data.places.map(p=>`<div class="pl" data-edit="${p.id}"><div><b>${esc(p.name)}</b>
+        <div class="muted">${p.address?esc(p.address):"住所なし"}${p.building?" ・ "+esc(p.building):""}</div></div><span class="muted">直す</span></div>`).join("")
+      : '<p class="hint">まだないで</p>';
+    $("plist").querySelectorAll("[data-edit]").forEach(el=>el.onclick=()=>openPForm(el.dataset.edit));
+  }
+  function openPForm(id){
+    const p=id ? data.places.find(x=>x.id===id) : null;
+    $("pId").value=p?p.id:""; $("pFormTitle").textContent=p?"行き先を直す":"行き先を追加";
+    $("pName").value=p?p.name:""; $("pAddr").value=p?p.address||"":""; $("pBldg").value=p?p.building||"":""; $("pMemo").value=p?p.memo||"":"";
+    $("pDel").style.display=p?"block":"none"; $("pForm").style.display="block"; $("pForm").scrollIntoView({behavior:"smooth",block:"start"});
+  }
+  $("pAdd").onclick=()=>openPForm(null);
+  $("pCancel").onclick=()=>{ $("pForm").style.display="none"; };
+  $("pSave").onclick=()=>{
+    const name=$("pName").value.trim(); if(!name){ toast("名前を入れてな"); return; }
+    const v={name, address:$("pAddr").value.trim(), building:$("pBldg").value.trim(), memo:$("pMemo").value.trim()};
+    const id=$("pId").value, p=id ? data.places.find(x=>x.id===id) : null;
+    if(p) Object.assign(p,v); else data.places.push(Object.assign({id:uid()},v));
+    save(); $("pForm").style.display="none"; renderAll(); toast(`${name} を保存したで`);
+  };
+  $("pDel").onclick=()=>{
+    const id=$("pId").value, p=data.places.find(x=>x.id===id); if(!p || !confirm(`${p.name} を削除する?(行った記録は残る)`)) return;
+    data.places=data.places.filter(x=>x.id!==id); save(); $("pForm").style.display="none"; renderAll(); toast("削除したで");
+  };
+
+  // ---------- 設定:時給 ----------
+  function fillSettings(){ $("sStart").value=data.set.start; $("sSwitch").value=data.set.switchAt; $("sR1").value=data.set.r1; $("sR2").value=data.set.r2; }
+  $("sSave").onclick=()=>{
+    const r1=parseInt($("sR1").value,10), r2=parseInt($("sR2").value,10);
+    if(!(r1>0) || !(r2>0)){ toast("時給は数字で入れてな"); return; }
+    if(!/^\d{2}:\d{2}$/.test($("sStart").value) || !/^\d{2}:\d{2}$/.test($("sSwitch").value)){ toast("時刻を入れてな"); return; }
+    data.set={start:$("sStart").value, switchAt:$("sSwitch").value, r1, r2}; save(); renderAll(); toast("保存したで");
+  };
+
+  // ---------- 読み込み・バックアップ ----------
+  // 読み込めるのは ①行き先の一覧({app:"massage", places:[...]}) ②このアプリのバックアップ({app:"massage", data:{...}})
+  $("bExport").onclick=()=>{
+    const blob=new Blob([JSON.stringify({app:"massage",ver:1,savedAt:new Date().toISOString(),data},null,2)],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`massage-backup-${ymd(new Date()).replace(/-/g,"")}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  };
+  $("bImport").onclick=()=>$("bFile").click();
+  $("bFile").onchange=async e=>{
+    const f=e.target.files[0]; if(!f) return;
+    try{
+      const j=JSON.parse(await f.text());
+      if(j.app!=="massage") throw new Error("このアプリのファイルとちゃう");
+      if(j.data){
+        if(!confirm(`バックアップで全部上書きする?(行き先${(j.data.places||[]).length}件・出勤${Object.keys(j.data.days||{}).length}日)`)) return;
+        data=Object.assign(defaults(), j.data); data.set=Object.assign(defaults().set, data.set||{});
+        ["places","visits"].forEach(k=>{ if(!Array.isArray(data[k])) data[k]=[]; });
+        ["days","paid"].forEach(k=>{ if(!data[k] || typeof data[k]!=="object") data[k]={}; });
+      }else if(Array.isArray(j.places)){
+        const have=new Set(data.places.map(p=>p.name)), add=j.places.filter(p=>p && p.name && !have.has(p.name));
+        if(!confirm(`行き先を${add.length}件足す?(同じ名前の${j.places.length-add.length}件は今のまま)`)) return;
+        add.forEach(p=>data.places.push({id:uid(), name:String(p.name), address:String(p.address||""), building:String(p.building||""), memo:String(p.memo||"")}));
+      }else throw new Error("中身が読めへん");
+      save(); renderAll(); fillSettings(); toast("読み込んだで");
+    }catch(err){ toast("読み込めへんかった:"+err.message); }
+    e.target.value="";
+  };
+
+  // ---------- 画面の切り替え ----------
+  document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
+    document.querySelectorAll(".view").forEach(v=>v.classList.toggle("on",v.id==="v-"+b.dataset.v));
+    $("scroller").scrollTop=0; renderAll();
+  });
+  function renderAll(){ renderToday(); renderPlaces(); renderLog(); renderPlist(); }
+  function tick(){ const n=new Date(); $("clock").textContent=hm(n); }
+  tick(); setInterval(tick,15000);
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ fitHeight(); tick(); renderAll(); } });
+  fillSettings(); renderAll();
+})();
+</script>
+</body>
+</html>
