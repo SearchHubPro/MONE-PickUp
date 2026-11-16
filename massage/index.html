@@ -16,6 +16,7 @@
   ・勤務は 19時スタート、終わりはふだん 1時(その日だけ 2時にもできる)。時給は 22時まで 1,220円、22時から 1,550円。経費なし(車は店の)
   ・給料は 1日〜15日の分がその月の 25日払い、16日〜月末の分が次の月の 10日払い
   ・シフトの入力・家族に見せる機能はなし
+  ・行き先は「個人宅/ホテル」で切り替え、名前・住所でさがす(2026-11-17 追加)
   ・お客さんの名前・住所はこのファイルに書かない(GitHub で誰でも見られるため)。本人のスマホで「読み込み」してスマホの中だけに置く
   データはこのスマホのブラウザの中(localStorage の massage.data.v1)だけ。ラウンジの方(sougei.data.v1)とは混ざらない。
 -->
@@ -129,6 +130,10 @@
     </div>
     <div class="card">
       <h2>行き先(名前を押すとナビ)</h2>
+      <div class="seg" id="kindSeg" style="margin-bottom:8px">
+        <button data-kind="home" class="on">個人宅</button>
+        <button data-kind="hotel">ホテル</button>
+      </div>
       <input id="q" type="search" placeholder="名前・住所でさがす" autocomplete="off">
       <div id="placeList"></div>
     </div>
@@ -177,6 +182,8 @@
     <div class="card" id="pForm" style="display:none">
       <h2 id="pFormTitle">行き先を追加</h2>
       <input type="hidden" id="pId">
+      <label>種類</label>
+      <div class="seg" id="pKindSeg"><button data-pkind="home">個人宅</button><button data-pkind="hotel">ホテル</button></div>
       <label>名前</label><input id="pName" autocomplete="off" placeholder="例:山田">
       <label>住所(ナビの行き先)</label><input id="pAddr" autocomplete="off" placeholder="例:大阪府堺市堺区南瓦町3-1">
       <label>建物・部屋</label><input id="pBldg" autocomplete="off" placeholder="例:○○マンション106号">
@@ -280,12 +287,19 @@
     location.href=navUrl(p);   // 先にマップを開いてから画面を描き直す
     renderAll();
   }
+  // 個人宅/ホテルの切り替え(2026-11-17 本人の指定)。種類は行き先ごとの kind("home"/"hotel"、なければ個人宅)。開いた時は個人宅
+  const KINDS={home:"個人宅", hotel:"ホテル"};
+  const kindOf = p => p.kind==="hotel" ? "hotel" : "home";
+  let placeKind="home";
+  document.querySelectorAll("#kindSeg [data-kind]").forEach(b=>b.onclick=()=>{ placeKind=b.dataset.kind; renderPlaces(); });
   function renderPlaces(){
+    document.querySelectorAll("#kindSeg [data-kind]").forEach(b=>{ const k=b.dataset.kind;
+      b.classList.toggle("on",k===placeKind); b.textContent=`${KINDS[k]}(${data.places.filter(p=>kindOf(p)===k).length})`; });
     const q=$("q").value.trim();
-    const list=data.places.filter(p=>!q || (p.name+" "+(p.address||"")+" "+(p.building||"")).includes(q));
+    const list=data.places.filter(p=>kindOf(p)===placeKind && (!q || (p.name+" "+(p.address||"")+" "+(p.building||"")).includes(q)));
     $("placeList").innerHTML = !data.places.length
       ? '<p class="hint">行き先がまだないで。「設定」で追加するか、一覧のファイルを読み込んでな。</p>'
-      : !list.length ? '<p class="hint">見つからへん</p>'
+      : !list.length ? `<p class="hint">${q?"見つからへん":KINDS[placeKind]+"はまだないで"}</p>`
       : list.map(p=>`<button class="place ${p.address?"":"noaddr"}" data-go="${p.id}"><div><div class="nm">${esc(p.name)}</div>
           <div class="ad">${p.address?esc(p.address.replace(/^大阪府/,"")):"住所なし"}${p.building?" ・ "+esc(p.building):""}</div></div><span class="go">➤</span></button>`).join("");
     $("placeList").querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>goPlace(b.dataset.go));
@@ -398,21 +412,25 @@
   // ---------- 設定:行き先 ----------
   function renderPlist(){
     $("plist").innerHTML = data.places.length ? data.places.map(p=>`<div class="pl" data-edit="${p.id}"><div><b>${esc(p.name)}</b>
-        <div class="muted">${p.address?esc(p.address):"住所なし"}${p.building?" ・ "+esc(p.building):""}</div></div><span class="muted">直す</span></div>`).join("")
+        <div class="muted">${KINDS[kindOf(p)]} ・ ${p.address?esc(p.address):"住所なし"}${p.building?" ・ "+esc(p.building):""}</div></div><span class="muted">直す</span></div>`).join("")
       : '<p class="hint">まだないで</p>';
     $("plist").querySelectorAll("[data-edit]").forEach(el=>el.onclick=()=>openPForm(el.dataset.edit));
   }
   function openPForm(id){
     const p=id ? data.places.find(x=>x.id===id) : null;
     $("pId").value=p?p.id:""; $("pFormTitle").textContent=p?"行き先を直す":"行き先を追加";
+    setPKind(p?kindOf(p):placeKind);
     $("pName").value=p?p.name:""; $("pAddr").value=p?p.address||"":""; $("pBldg").value=p?p.building||"":""; $("pMemo").value=p?p.memo||"":"";
     $("pDel").style.display=p?"block":"none"; $("pForm").style.display="block"; $("pForm").scrollIntoView({behavior:"smooth",block:"start"});
   }
+  let pKind="home";
+  function setPKind(k){ pKind=k; document.querySelectorAll("#pKindSeg [data-pkind]").forEach(b=>b.classList.toggle("on",b.dataset.pkind===k)); }
+  document.querySelectorAll("#pKindSeg [data-pkind]").forEach(b=>b.onclick=()=>setPKind(b.dataset.pkind));
   $("pAdd").onclick=()=>openPForm(null);
   $("pCancel").onclick=()=>{ $("pForm").style.display="none"; };
   $("pSave").onclick=()=>{
     const name=$("pName").value.trim(); if(!name){ toast("名前を入れてな"); return; }
-    const v={name, address:$("pAddr").value.trim(), building:$("pBldg").value.trim(), memo:$("pMemo").value.trim()};
+    const v={name, kind:pKind, address:$("pAddr").value.trim(), building:$("pBldg").value.trim(), memo:$("pMemo").value.trim()};
     const id=$("pId").value, p=id ? data.places.find(x=>x.id===id) : null;
     if(p) Object.assign(p,v); else data.places.push(Object.assign({id:uid()},v));
     save(); $("pForm").style.display="none"; renderAll(); toast(`${name} を保存したで`);
@@ -450,9 +468,12 @@
         ["places","visits"].forEach(k=>{ if(!Array.isArray(data[k])) data[k]=[]; });
         ["days","paid"].forEach(k=>{ if(!data[k] || typeof data[k]!=="object") data[k]={}; });
       }else if(Array.isArray(j.places)){
-        const have=new Set(data.places.map(p=>p.name)), add=j.places.filter(p=>p && p.name && !have.has(p.name));
-        if(!confirm(`行き先を${add.length}件足す?(同じ名前の${j.places.length-add.length}件は今のまま)`)) return;
-        add.forEach(p=>data.places.push({id:uid(), name:String(p.name), address:String(p.address||""), building:String(p.building||""), memo:String(p.memo||"")}));
+        // 同じ名前の行き先は増やさない。ファイルに種類(kind)があれば、その行き先の種類だけ合わせる(前に読み込んだホテルを「ホテル」にする用)
+        const have=new Map(data.places.map(p=>[p.name,p])), add=j.places.filter(p=>p && p.name && !have.has(p.name));
+        const upd=j.places.filter(p=>p && have.has(p.name) && KINDS[p.kind] && kindOf(have.get(p.name))!==p.kind);
+        if(!confirm(`行き先を${add.length}件足す?${upd.length?`(${upd.length}件は種類を${[...new Set(upd.map(p=>KINDS[p.kind]))].join("・")}に直す)`:""}(同じ名前のものは増えへん)`)) return;
+        upd.forEach(p=>{ have.get(p.name).kind=p.kind; });
+        add.forEach(p=>data.places.push({id:uid(), kind:KINDS[p.kind]?p.kind:"home", name:String(p.name), address:String(p.address||""), building:String(p.building||""), memo:String(p.memo||"")}));
       }else throw new Error("中身が読めへん");
       save(); renderAll(); fillSettings(); toast("読み込んだで");
     }catch(err){ toast("読み込めへんかった:"+err.message); }
